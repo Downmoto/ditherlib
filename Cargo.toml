@@ -1,0 +1,25 @@
+[package]
+name = "ditherlib"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["jpeg", "png"]
+avif = ["image/avif"]
+bmp = ["image/bmp"]
+dds = ["image/dds"]
+exr = ["image/exr"]
+ff = ["image/ff"]
+gif = ["image/gif"]
+hdr = ["image/hdr"]
+ico = ["image/ico"]
+jpeg = ["image/jpeg"]
+png = ["image/png"]
+pnm = ["image/pnm"]
+qoi = ["image/qoi"]
+tga = ["image/tga"]
+tiff = ["image/tiff"]
+webp = ["image/webp"]
+
+[dependencies]
+image = { version = "0.25.10", default-features = false }
