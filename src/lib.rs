@@ -1,57 +1,5 @@
 #![warn(missing_docs)]
-
-//! Non-destructive image effects and dithering for whole images and polygon
-//! selections.
-//!
-//! Images loaded with [`read()`] are normalised to immutable RGBA8
-//! [`SourceImage`] values. A [`Pipeline`] describes effects in evaluation
-//! order, and [`Renderer`] produces a separately owned [`RenderedImage`] that
-//! can be saved with [`write()`].
-//!
-//! # Example
-//!
-//! ```no_run
-//! use ditherlib::{
-//!     Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer,
-//!     Selection, read, write,
-//! };
-//!
-//! fn main() -> ditherlib::Result<()> {
-//!     let source = read("input.jpg")?;
-//!     let (width, height) = source.dimensions();
-//!     let area = Polygon::new([
-//!         Point::new(width as f32 * 0.20, height as f32 * 0.20),
-//!         Point::new(width as f32 * 0.80, height as f32 * 0.20),
-//!         Point::new(width as f32 * 0.80, height as f32 * 0.80),
-//!         Point::new(width as f32 * 0.20, height as f32 * 0.80),
-//!     ])?;
-//!
-//!     let mut pipeline = Pipeline::new();
-//!     pipeline.add(Greyscale, Selection::All);
-//!     pipeline.add(
-//!         OrderedDither::new(Palette::monochrome([220, 20, 60]), 4)?
-//!             .with_pixel_size(4)?,
-//!         Selection::Polygon(area),
-//!     );
-//!
-//!     let rendered = Renderer::new().render_pipeline(&source, &pipeline)?;
-//!     write("output.png", &rendered)
-//! }
-//! ```
-//!
-//! # Errors
-//!
-//! Fallible operations return the crate-owned [`Result`] type. Use
-//! [`DitherError::kind`] to handle stable [`ErrorKind`] categories. Decoding
-//! and encoding failures may retain a dependency error through the standard
-//! [`std::error::Error::source`] method for diagnostics.
-//!
-//! # Cargo features
-//!
-//! JPEG and PNG codecs are enabled by default. Disable default features to
-//! build the processing algorithms without codecs, then enable any required
-//! formats individually: `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
-//! `ico`, `jpeg`, `png`, `pnm`, `qoi`, `tga`, `tiff`, or `webp`.
+#![doc = include_str!("../README.md")]
 
 use std::fmt;
 
