@@ -59,18 +59,45 @@ impl std::error::Error for DitherError {
 
 /// An image loaded into memory by Ditherlib.
 pub struct SourceImage {
-    inner: image::DynamicImage,
+    width: u32,
+    height: u32,
+    pixels: Box<[u8]>,
 }
 
 impl SourceImage {
     /// Returns the image width in pixels.
-    pub fn width(&self) -> u32 {
-        self.inner.width()
+    pub const fn width(&self) -> u32 {
+        self.width
     }
 
     /// Returns the image height in pixels.
-    pub fn height(&self) -> u32 {
-        self.inner.height()
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Returns the image dimensions as `(width, height)`.
+    pub const fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// Returns the row-major RGBA8 pixel bytes.
+    pub fn rgba8_bytes(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// Returns the RGBA8 value at `(x, y)`, or `None` when it is out of bounds.
+    pub fn pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+
+        let index = (y as usize * self.width as usize + x as usize) * 4;
+        Some([
+            self.pixels[index],
+            self.pixels[index + 1],
+            self.pixels[index + 2],
+            self.pixels[index + 3],
+        ])
     }
 }
 
@@ -97,7 +124,16 @@ impl fmt::Debug for SourceImage {
 /// [`ErrorKind::Decode`] when its contents cannot be decoded.
 pub fn read(path: impl AsRef<Path>) -> Result<SourceImage> {
     image::open(path)
-        .map(|inner| SourceImage { inner })
+        .map(|image| {
+            let image = image.into_rgba8();
+            let (width, height) = image.dimensions();
+
+            SourceImage {
+                width,
+                height,
+                pixels: image.into_raw().into_boxed_slice(),
+            }
+        })
         .map_err(DitherError::from_image)
 }
 
@@ -112,8 +148,17 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid.jpg");
         let image = read(path).expect("valid.jpg should be a valid JPEG image");
 
-        assert!(image.width() > 0);
-        assert!(image.height() > 0);
+        assert_eq!(image.width(), 3000);
+        assert_eq!(image.height(), 4496);
+        assert_eq!(image.dimensions(), (3000, 4496));
+
+        let pixels: &[u8] = image.rgba8_bytes();
+        assert_eq!(pixels.len(), 3000 * 4496 * 4);
+        assert_eq!(image.pixel(0, 0), Some([164, 59, 4, 255]));
+        assert_eq!(image.pixel(1500, 2248), Some([148, 164, 226, 255]));
+        assert_eq!(image.pixel(2999, 4495), Some([255, 254, 215, 255]));
+        assert_eq!(image.pixel(3000, 0), None);
+        assert_eq!(image.pixel(0, 4496), None);
     }
 
     #[test]
