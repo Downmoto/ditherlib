@@ -5,7 +5,7 @@ mod io;
 mod renderer;
 mod selection;
 
-pub use effects::Greyscale;
+pub use effects::{Blur, Greyscale};
 pub use io::{read, write};
 pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
@@ -31,6 +31,8 @@ pub enum ErrorKind {
     DimensionMismatch,
     /// An effect could not be rendered.
     Effect,
+    /// An effect parameter is invalid.
+    InvalidParameter,
 }
 
 /// An error returned by a Ditherlib operation.
