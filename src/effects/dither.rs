@@ -1,16 +1,28 @@
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
 
 const FIXED_SCALE: i32 = 256;
-const FLOYD_STEINBERG_NEIGHBOURS: &[(i64, i64, i32)] =
-    &[(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)];
-const ATKINSON_NEIGHBOURS: &[(i64, i64, i32)] = &[
-    (1, 0, 1),
-    (2, 0, 1),
-    (-1, 1, 1),
-    (0, 1, 1),
-    (1, 1, 1),
-    (0, 2, 1),
-];
+const FLOYD_STEINBERG: DiffusionKernel = DiffusionKernel {
+    neighbours: &[(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)],
+    divisor: 16,
+};
+const ATKINSON: DiffusionKernel = DiffusionKernel {
+    neighbours: &[
+        (1, 0, 1),
+        (2, 0, 1),
+        (-1, 1, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+        (0, 2, 1),
+    ],
+    divisor: 8,
+};
+
+/// Error destinations and their shared weight divisor.
+#[derive(Clone, Copy)]
+struct DiffusionKernel {
+    neighbours: &'static [(i64, i64, i32)],
+    divisor: i32,
+}
 
 /// A non-empty collection of RGB colours available to a dithering effect.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,17 +78,36 @@ impl Palette {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Threshold {
     palette: Palette,
+    pixel_size: u32,
 }
 
 impl Threshold {
     /// Creates threshold dithering with the supplied palette.
     pub const fn new(palette: Palette) -> Self {
-        Self { palette }
+        Self {
+            palette,
+            pixel_size: 1,
+        }
     }
 
     /// Returns the target palette.
     pub const fn palette(&self) -> &Palette {
         &self.palette
+    }
+
+    /// Sets the width and height of each square logical pixel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
+    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
+        self.pixel_size = validate_pixel_size(pixel_size)?;
+        Ok(self)
+    }
+
+    /// Returns the width and height of each square logical pixel.
+    pub const fn pixel_size(&self) -> u32 {
+        self.pixel_size
     }
 }
 
@@ -88,26 +119,14 @@ impl Effect for Threshold {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
-            return Ok(());
-        };
-        let width = dimensions.0 as usize;
-
-        for y in min_y..max_y {
-            for x in min_x..max_x {
-                let pixel_index = y as usize * width + x as usize;
-                if mask.coverage_bytes()[pixel_index] == 0 {
-                    continue;
-                }
-                let byte_index = pixel_index * 4;
-                let input = &input[byte_index..byte_index + 4];
-
-                let colour = self.palette.nearest_colour([input[0], input[1], input[2]]);
-                output[byte_index..byte_index + 4]
-                    .copy_from_slice(&[colour[0], colour[1], colour[2], input[3]]);
-            }
-        }
-
+        quantise_cells(
+            input,
+            output,
+            dimensions,
+            mask,
+            self.pixel_size,
+            |colour, _, _| self.palette.nearest_colour(colour),
+        );
         Ok(())
     }
 }
@@ -120,6 +139,7 @@ impl Effect for Threshold {
 pub struct OrderedDither {
     palette: Palette,
     matrix_size: u8,
+    pixel_size: u32,
 }
 
 impl OrderedDither {
@@ -140,6 +160,7 @@ impl OrderedDither {
         Ok(Self {
             palette,
             matrix_size,
+            pixel_size: 1,
         })
     }
 
@@ -152,6 +173,21 @@ impl OrderedDither {
     pub const fn matrix_size(&self) -> u8 {
         self.matrix_size
     }
+
+    /// Sets the width and height of each square logical pixel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
+    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
+        self.pixel_size = validate_pixel_size(pixel_size)?;
+        Ok(self)
+    }
+
+    /// Returns the width and height of each square logical pixel.
+    pub const fn pixel_size(&self) -> u32 {
+        self.pixel_size
+    }
 }
 
 impl Effect for OrderedDither {
@@ -162,31 +198,21 @@ impl Effect for OrderedDither {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
-            return Ok(());
-        };
-        let width = dimensions.0 as usize;
-
-        for y in min_y..max_y {
-            for x in min_x..max_x {
-                let pixel_index = y as usize * width + x as usize;
-                if mask.coverage_bytes()[pixel_index] == 0 {
-                    continue;
-                }
-                let byte_index = pixel_index * 4;
-                let input = &input[byte_index..byte_index + 4];
+        quantise_cells(
+            input,
+            output,
+            dimensions,
+            mask,
+            self.pixel_size,
+            |colour, x, y| {
                 let colour = adjust_colour(
-                    [input[0], input[1], input[2]],
+                    colour,
                     bayer_value(x, y, self.matrix_size),
                     self.matrix_size,
                 );
-                let colour = self.palette.nearest_colour(colour);
-
-                output[byte_index..byte_index + 4]
-                    .copy_from_slice(&[colour[0], colour[1], colour[2], input[3]]);
-            }
-        }
-
+                self.palette.nearest_colour(colour)
+            },
+        );
         Ok(())
     }
 }
@@ -198,17 +224,36 @@ impl Effect for OrderedDither {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FloydSteinberg {
     palette: Palette,
+    pixel_size: u32,
 }
 
 impl FloydSteinberg {
     /// Creates Floyd-Steinberg dithering with the supplied palette.
     pub const fn new(palette: Palette) -> Self {
-        Self { palette }
+        Self {
+            palette,
+            pixel_size: 1,
+        }
     }
 
     /// Returns the target palette.
     pub const fn palette(&self) -> &Palette {
         &self.palette
+    }
+
+    /// Sets the width and height of each square logical pixel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
+    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
+        self.pixel_size = validate_pixel_size(pixel_size)?;
+        Ok(self)
+    }
+
+    /// Returns the width and height of each square logical pixel.
+    pub const fn pixel_size(&self) -> u32 {
+        self.pixel_size
     }
 }
 
@@ -226,8 +271,8 @@ impl Effect for FloydSteinberg {
             dimensions,
             mask,
             &self.palette,
-            FLOYD_STEINBERG_NEIGHBOURS,
-            16,
+            FLOYD_STEINBERG,
+            self.pixel_size,
         );
         Ok(())
     }
@@ -241,17 +286,36 @@ impl Effect for FloydSteinberg {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Atkinson {
     palette: Palette,
+    pixel_size: u32,
 }
 
 impl Atkinson {
     /// Creates Atkinson dithering with the supplied palette.
     pub const fn new(palette: Palette) -> Self {
-        Self { palette }
+        Self {
+            palette,
+            pixel_size: 1,
+        }
     }
 
     /// Returns the target palette.
     pub const fn palette(&self) -> &Palette {
         &self.palette
+    }
+
+    /// Sets the width and height of each square logical pixel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
+    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
+        self.pixel_size = validate_pixel_size(pixel_size)?;
+        Ok(self)
+    }
+
+    /// Returns the width and height of each square logical pixel.
+    pub const fn pixel_size(&self) -> u32 {
+        self.pixel_size
     }
 }
 
@@ -269,54 +333,247 @@ impl Effect for Atkinson {
             dimensions,
             mask,
             &self.palette,
-            ATKINSON_NEIGHBOURS,
-            8,
+            ATKINSON,
+            self.pixel_size,
         );
         Ok(())
     }
 }
 
-/// Quantises selected pixels and distributes their errors to later neighbours.
+/// Quantises selected logical cells without error diffusion.
+fn quantise_cells(
+    input: &[u8],
+    output: &mut [u8],
+    dimensions: (u32, u32),
+    mask: &Mask,
+    pixel_size: u32,
+    mut quantise: impl FnMut([u8; 3], u32, u32) -> [u8; 3],
+) {
+    let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+        return;
+    };
+    let image_width = dimensions.0 as usize;
+
+    if pixel_size == 1 {
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let pixel_index = y as usize * image_width + x as usize;
+                if mask.coverage_bytes()[pixel_index] == 0 {
+                    continue;
+                }
+                let byte_index = pixel_index * 4;
+                let colour = quantise(
+                    [
+                        input[byte_index],
+                        input[byte_index + 1],
+                        input[byte_index + 2],
+                    ],
+                    x,
+                    y,
+                );
+                output[byte_index..byte_index + 4].copy_from_slice(&[
+                    colour[0],
+                    colour[1],
+                    colour[2],
+                    input[byte_index + 3],
+                ]);
+            }
+        }
+        return;
+    }
+
+    let start_x = align_to_grid(min_x, pixel_size);
+    let start_y = align_to_grid(min_y, pixel_size);
+    let mut y = start_y;
+
+    while y < max_y {
+        let mut x = start_x;
+        while x < max_x {
+            let bounds = cell_bounds(x, y, pixel_size, dimensions);
+            if let Some(colour) = sample_cell(input, mask, image_width, bounds) {
+                let colour = quantise(colour, x / pixel_size, y / pixel_size);
+                write_cell(input, output, mask, image_width, bounds, colour);
+            }
+            x = x.saturating_add(pixel_size);
+        }
+        y = y.saturating_add(pixel_size);
+    }
+}
+
+/// Quantises selected logical cells and distributes errors to later cells.
 fn diffuse_error(
     input: &[u8],
     output: &mut [u8],
     dimensions: (u32, u32),
     mask: &Mask,
     palette: &Palette,
-    neighbours: &[(i64, i64, i32)],
-    divisor: i32,
+    kernel: DiffusionKernel,
+    pixel_size: u32,
 ) {
     let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
         return;
     };
     let image_width = dimensions.0 as usize;
-    let working_width = (max_x - min_x) as usize;
-    let mut working = Vec::with_capacity(working_width * (max_y - min_y) as usize);
+    let start_x = align_to_grid(min_x, pixel_size);
+    let start_y = align_to_grid(min_y, pixel_size);
+    let working_width = (max_x - start_x).div_ceil(pixel_size) as usize;
+    let working_height = (max_y - start_y).div_ceil(pixel_size) as usize;
+    let mut selected = Vec::with_capacity(working_width * working_height);
+    let mut working = Vec::with_capacity(working_width * working_height);
 
-    for y in min_y..max_y {
-        for x in min_x..max_x {
-            let byte_index = (y as usize * image_width + x as usize) * 4;
-            working.push([
-                i32::from(input[byte_index]) * FIXED_SCALE,
-                i32::from(input[byte_index + 1]) * FIXED_SCALE,
-                i32::from(input[byte_index + 2]) * FIXED_SCALE,
-            ]);
+    for cell_y in 0..working_height {
+        for cell_x in 0..working_width {
+            let x = start_x + cell_x as u32 * pixel_size;
+            let y = start_y + cell_y as u32 * pixel_size;
+            let bounds = cell_bounds(x, y, pixel_size, dimensions);
+            let colour = sample_cell(input, mask, image_width, bounds);
+            selected.push(colour.is_some());
+            working.push(
+                colour
+                    .unwrap_or([0; 3])
+                    .map(|channel| i32::from(channel) * FIXED_SCALE),
+            );
         }
     }
 
-    for y in min_y..max_y {
-        for x in min_x..max_x {
-            let pixel_index = y as usize * image_width + x as usize;
-            if mask.coverage_bytes()[pixel_index] == 0 {
+    for cell_y in 0..working_height {
+        for cell_x in 0..working_width {
+            let working_index = cell_y * working_width + cell_x;
+            if !selected[working_index] {
                 continue;
             }
 
-            let working_index = (y - min_y) as usize * working_width + (x - min_x) as usize;
             let adjusted =
                 working[working_index].map(|channel| channel.clamp(0, 255 * FIXED_SCALE));
             let colour = palette.nearest_colour(
                 adjusted.map(|channel| ((channel + FIXED_SCALE / 2) / FIXED_SCALE) as u8),
             );
+            let x = start_x + cell_x as u32 * pixel_size;
+            let y = start_y + cell_y as u32 * pixel_size;
+            write_cell(
+                input,
+                output,
+                mask,
+                image_width,
+                cell_bounds(x, y, pixel_size, dimensions),
+                colour,
+            );
+            let error = [
+                adjusted[0] - i32::from(colour[0]) * FIXED_SCALE,
+                adjusted[1] - i32::from(colour[1]) * FIXED_SCALE,
+                adjusted[2] - i32::from(colour[2]) * FIXED_SCALE,
+            ];
+
+            for &(offset_x, offset_y, weight) in kernel.neighbours {
+                let neighbour_x = cell_x as i64 + offset_x;
+                let neighbour_y = cell_y as i64 + offset_y;
+                if neighbour_x < 0
+                    || neighbour_x >= working_width as i64
+                    || neighbour_y < 0
+                    || neighbour_y >= working_height as i64
+                {
+                    continue;
+                }
+
+                let neighbour_x = neighbour_x as usize;
+                let neighbour_y = neighbour_y as usize;
+                let neighbour_index = neighbour_y * working_width + neighbour_x;
+                if !selected[neighbour_index] {
+                    continue;
+                }
+                if !diffusion_path_is_selected(
+                    &selected,
+                    working_width,
+                    cell_x,
+                    cell_y,
+                    offset_x,
+                    offset_y,
+                ) {
+                    continue;
+                }
+
+                for channel in 0..3 {
+                    working[neighbour_index][channel] += error[channel] * weight / kernel.divisor;
+                }
+            }
+        }
+    }
+}
+
+/// Returns the image-origin-aligned coordinate containing `coordinate`.
+fn align_to_grid(coordinate: u32, pixel_size: u32) -> u32 {
+    coordinate - coordinate % pixel_size
+}
+
+/// Returns exclusive image bounds for a logical pixel.
+fn cell_bounds(x: u32, y: u32, pixel_size: u32, dimensions: (u32, u32)) -> (u32, u32, u32, u32) {
+    (
+        x,
+        y,
+        x.saturating_add(pixel_size).min(dimensions.0),
+        y.saturating_add(pixel_size).min(dimensions.1),
+    )
+}
+
+/// Averages selected RGB values within a logical pixel using mask coverage.
+fn sample_cell(
+    input: &[u8],
+    mask: &Mask,
+    image_width: usize,
+    bounds: (u32, u32, u32, u32),
+) -> Option<[u8; 3]> {
+    if bounds.2 - bounds.0 == 1 && bounds.3 - bounds.1 == 1 {
+        let pixel_index = bounds.1 as usize * image_width + bounds.0 as usize;
+        if mask.coverage_bytes()[pixel_index] == 0 {
+            return None;
+        }
+        let byte_index = pixel_index * 4;
+        return Some([
+            input[byte_index],
+            input[byte_index + 1],
+            input[byte_index + 2],
+        ]);
+    }
+
+    let mut totals = [0_u64; 3];
+    let mut total_coverage = 0_u64;
+
+    for y in bounds.1..bounds.3 {
+        for x in bounds.0..bounds.2 {
+            let pixel_index = y as usize * image_width + x as usize;
+            let coverage = u64::from(mask.coverage_bytes()[pixel_index]);
+            if coverage == 0 {
+                continue;
+            }
+
+            let byte_index = pixel_index * 4;
+            for channel in 0..3 {
+                totals[channel] += u64::from(input[byte_index + channel]) * coverage;
+            }
+            total_coverage += coverage;
+        }
+    }
+
+    (total_coverage != 0)
+        .then(|| totals.map(|total| ((total + total_coverage / 2) / total_coverage) as u8))
+}
+
+/// Fills the selected portion of a logical pixel while preserving alpha.
+fn write_cell(
+    input: &[u8],
+    output: &mut [u8],
+    mask: &Mask,
+    image_width: usize,
+    bounds: (u32, u32, u32, u32),
+    colour: [u8; 3],
+) {
+    for y in bounds.1..bounds.3 {
+        for x in bounds.0..bounds.2 {
+            let pixel_index = y as usize * image_width + x as usize;
+            if mask.coverage_bytes()[pixel_index] == 0 {
+                continue;
+            }
+
             let byte_index = pixel_index * 4;
             output[byte_index..byte_index + 4].copy_from_slice(&[
                 colour[0],
@@ -324,62 +581,38 @@ fn diffuse_error(
                 colour[2],
                 input[byte_index + 3],
             ]);
-            let error = [
-                adjusted[0] - i32::from(colour[0]) * FIXED_SCALE,
-                adjusted[1] - i32::from(colour[1]) * FIXED_SCALE,
-                adjusted[2] - i32::from(colour[2]) * FIXED_SCALE,
-            ];
-
-            for &(offset_x, offset_y, weight) in neighbours {
-                let neighbour_x = i64::from(x) + offset_x;
-                let neighbour_y = i64::from(y) + offset_y;
-                if neighbour_x < i64::from(min_x)
-                    || neighbour_x >= i64::from(max_x)
-                    || neighbour_y < i64::from(min_y)
-                    || neighbour_y >= i64::from(max_y)
-                {
-                    continue;
-                }
-
-                let neighbour_x = neighbour_x as u32;
-                let neighbour_y = neighbour_y as u32;
-                let neighbour_pixel = neighbour_y as usize * image_width + neighbour_x as usize;
-                if mask.coverage_bytes()[neighbour_pixel] == 0 {
-                    continue;
-                }
-                if !diffusion_path_is_selected(mask, image_width, x, y, offset_x, offset_y) {
-                    continue;
-                }
-
-                let neighbour_index =
-                    (neighbour_y - min_y) as usize * working_width + (neighbour_x - min_x) as usize;
-                for channel in 0..3 {
-                    working[neighbour_index][channel] += error[channel] * weight / divisor;
-                }
-            }
         }
     }
 }
 
-/// Prevents two-pixel diffusion taps from jumping across an unselected pixel.
+/// Prevents two-cell diffusion taps from jumping across an unselected cell.
 fn diffusion_path_is_selected(
-    mask: &Mask,
-    image_width: usize,
-    x: u32,
-    y: u32,
+    selected: &[bool],
+    width: usize,
+    x: usize,
+    y: usize,
     offset_x: i64,
     offset_y: i64,
 ) -> bool {
     let middle = match (offset_x, offset_y) {
-        (-2 | 2, 0) => Some((i64::from(x) + offset_x / 2, i64::from(y))),
-        (0, -2 | 2) => Some((i64::from(x), i64::from(y) + offset_y / 2)),
+        (-2 | 2, 0) => Some((x as i64 + offset_x / 2, y as i64)),
+        (0, -2 | 2) => Some((x as i64, y as i64 + offset_y / 2)),
         _ => None,
     };
 
-    middle.is_none_or(|(x, y)| {
-        let pixel_index = y as usize * image_width + x as usize;
-        mask.coverage_bytes()[pixel_index] != 0
-    })
+    middle.is_none_or(|(x, y)| selected[y as usize * width + x as usize])
+}
+
+/// Validates a logical pixel size shared by all dithering effects.
+fn validate_pixel_size(pixel_size: u32) -> Result<u32> {
+    if pixel_size == 0 {
+        return Err(DitherError::new(
+            ErrorKind::InvalidParameter,
+            "dither pixel size must be greater than zero",
+        ));
+    }
+
+    Ok(pixel_size)
 }
 
 /// Adjusts RGB channels around the Bayer threshold before palette matching.
@@ -762,5 +995,136 @@ mod tests {
             .render(&source, &atkinson, &Selection::All)
             .unwrap();
         assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+    }
+
+    #[test]
+    fn validates_dither_pixel_sizes() {
+        assert_eq!(Threshold::new(Palette::monochrome()).pixel_size(), 1);
+        assert_eq!(
+            Threshold::new(Palette::monochrome())
+                .with_pixel_size(3)
+                .unwrap()
+                .pixel_size(),
+            3
+        );
+
+        let errors = [
+            Threshold::new(Palette::monochrome())
+                .with_pixel_size(0)
+                .unwrap_err(),
+            OrderedDither::new(Palette::monochrome(), 2)
+                .unwrap()
+                .with_pixel_size(0)
+                .unwrap_err(),
+            FloydSteinberg::new(Palette::monochrome())
+                .with_pixel_size(0)
+                .unwrap_err(),
+            Atkinson::new(Palette::monochrome())
+                .with_pixel_size(0)
+                .unwrap_err(),
+        ];
+        assert!(
+            errors
+                .iter()
+                .all(|error| error.kind() == ErrorKind::InvalidParameter)
+        );
+    }
+
+    #[test]
+    fn threshold_fills_logical_pixels_with_their_average_colour() {
+        let source = source(
+            4,
+            1,
+            &[
+                [0, 0, 0, 1],
+                [200, 200, 200, 2],
+                [100, 100, 100, 3],
+                [255, 255, 255, 4],
+            ],
+        );
+        let effect = Threshold::new(Palette::monochrome())
+            .with_pixel_size(2)
+            .unwrap();
+        let rendered = Renderer::new()
+            .render(&source, &effect, &Selection::All)
+            .unwrap();
+
+        assert_eq!(
+            rendered.rgba8_bytes(),
+            &[0, 0, 0, 1, 0, 0, 0, 2, 255, 255, 255, 3, 255, 255, 255, 4]
+        );
+    }
+
+    #[test]
+    fn ordered_dithering_scales_bayer_cells() {
+        let source = source(4, 1, &[[128, 128, 128, 9]; 4]);
+        let effect = OrderedDither::new(Palette::monochrome(), 2)
+            .unwrap()
+            .with_pixel_size(2)
+            .unwrap();
+        let rendered = Renderer::new()
+            .render(&source, &effect, &Selection::All)
+            .unwrap();
+
+        assert_eq!(
+            rendered.rgba8_bytes(),
+            &[0, 0, 0, 9, 0, 0, 0, 9, 255, 255, 255, 9, 255, 255, 255, 9]
+        );
+    }
+
+    #[test]
+    fn scaled_dithering_keeps_cells_anchored_and_clipped_to_a_polygon() {
+        let source = source(4, 1, &[[128, 128, 128, 7]; 4]);
+        let polygon = Polygon::new([
+            Point::new(3.0, 0.0),
+            Point::new(4.0, 0.0),
+            Point::new(4.0, 1.0),
+            Point::new(3.0, 1.0),
+        ])
+        .unwrap();
+        let effect = OrderedDither::new(Palette::monochrome(), 2)
+            .unwrap()
+            .with_pixel_size(2)
+            .unwrap();
+        let rendered = Renderer::new()
+            .render(&source, &effect, &Selection::Polygon(polygon))
+            .unwrap();
+
+        assert_eq!(rendered.pixel(0, 0), source.pixel(0, 0));
+        assert_eq!(rendered.pixel(1, 0), source.pixel(1, 0));
+        assert_eq!(rendered.pixel(2, 0), source.pixel(2, 0));
+        assert_eq!(rendered.pixel(3, 0), Some([255, 255, 255, 7]));
+    }
+
+    #[test]
+    fn error_diffusion_operates_between_logical_pixels() {
+        let pixels = (1..=8)
+            .map(|alpha| [100, 100, 100, alpha])
+            .collect::<Vec<_>>();
+        let source = source(8, 1, &pixels);
+        let floyd = FloydSteinberg::new(Palette::monochrome())
+            .with_pixel_size(2)
+            .unwrap();
+        let atkinson = Atkinson::new(Palette::monochrome())
+            .with_pixel_size(2)
+            .unwrap();
+
+        let floyd = Renderer::new()
+            .render(&source, &floyd, &Selection::All)
+            .unwrap();
+        let atkinson = Renderer::new()
+            .render(&source, &atkinson, &Selection::All)
+            .unwrap();
+
+        let floyd_colours = [0, 0, 255, 255, 0, 0, 0, 0];
+        let atkinson_colours = [0, 0, 0, 0, 0, 0, 255, 255];
+        for (index, pixel) in floyd.rgba8_bytes().as_chunks::<4>().0.iter().enumerate() {
+            let value = floyd_colours[index];
+            assert_eq!(*pixel, [value, value, value, (index + 1) as u8]);
+        }
+        for (index, pixel) in atkinson.rgba8_bytes().as_chunks::<4>().0.iter().enumerate() {
+            let value = atkinson_colours[index];
+            assert_eq!(*pixel, [value, value, value, (index + 1) as u8]);
+        }
     }
 }

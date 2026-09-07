@@ -21,7 +21,7 @@ fn main() -> ExitCode {
 
 fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     let source = read(input)?;
-    let effect = OrderedDither::new(Palette::monochrome(), 4)?;
+    let effect = OrderedDither::new(Palette::monochrome(), 4)?.with_pixel_size(4)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write(output, &rendered)
 }

@@ -122,6 +122,10 @@ Dithering is divided into three decisions:
 
 Initial spatial methods can include threshold, ordered Bayer dithering, Floyd-Steinberg error diffusion, and Atkinson error diffusion. Configuration should use ordinary structs and enums until external implementations require additional extension points.
 
+Dithering methods may operate on an image-origin-aligned logical grid. A configurable pixel size controls the square cell dimensions, allowing each sampled and quantised colour to fill a larger block. Error diffusion propagates between logical cells rather than individual image pixels.
+
+Halftoning and explicit spacing controls are deferred. Their design must define dot shape, background colour, and how spacing interacts with polygon boundaries before they become part of the dithering API.
+
 Noise-based methods must accept an explicit seed so renders remain reproducible.
 
 For polygon selections, error diffusion follows these boundary rules:
