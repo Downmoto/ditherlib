@@ -1,10 +1,12 @@
-use std::{fmt, path::Path};
+use std::fmt;
 
 mod effects;
+mod io;
 mod renderer;
 mod selection;
 
 pub use effects::Greyscale;
+pub use io::{read, write};
 pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
 
@@ -21,6 +23,8 @@ pub enum ErrorKind {
     UnsupportedFormat,
     /// An image could not be decoded.
     Decode,
+    /// An image could not be encoded.
+    Encode,
     /// A polygon is malformed.
     InvalidPolygon,
     /// A mask's dimensions and coverage length do not agree.
@@ -52,7 +56,7 @@ impl DitherError {
         }
     }
 
-    fn from_image(source: image::ImageError) -> Self {
+    fn from_image_decode(source: image::ImageError) -> Self {
         let kind = match &source {
             image::ImageError::IoError(_) => ErrorKind::FileAccess,
             image::ImageError::Unsupported(_) => ErrorKind::UnsupportedFormat,
@@ -62,6 +66,26 @@ impl DitherError {
             ErrorKind::FileAccess => "could not access image file",
             ErrorKind::UnsupportedFormat => "unsupported image format",
             ErrorKind::Decode => "could not decode image",
+            _ => unreachable!(),
+        };
+
+        Self {
+            kind,
+            message: message.into(),
+            source: Some(Box::new(source)),
+        }
+    }
+
+    fn from_image_encode(source: image::ImageError) -> Self {
+        let kind = match &source {
+            image::ImageError::IoError(_) => ErrorKind::FileAccess,
+            image::ImageError::Unsupported(_) => ErrorKind::UnsupportedFormat,
+            _ => ErrorKind::Encode,
+        };
+        let message = match kind {
+            ErrorKind::FileAccess => "could not access image file",
+            ErrorKind::UnsupportedFormat => "unsupported image format",
+            ErrorKind::Encode => "could not encode image",
             _ => unreachable!(),
         };
 
@@ -142,32 +166,6 @@ impl fmt::Debug for SourceImage {
             .field("height", &self.height())
             .finish_non_exhaustive()
     }
-}
-
-/// Reads and decodes an image from disk.
-///
-/// The image format is determined from the path's file extension and must be
-/// enabled through the corresponding crate feature. JPEG and PNG support are
-/// enabled by default.
-///
-/// # Errors
-///
-/// Returns [`ErrorKind::FileAccess`] when the file cannot be opened,
-/// [`ErrorKind::UnsupportedFormat`] when its format is unavailable, and
-/// [`ErrorKind::Decode`] when its contents cannot be decoded.
-pub fn read(path: impl AsRef<Path>) -> Result<SourceImage> {
-    image::open(path)
-        .map(|image| {
-            let image = image.into_rgba8();
-            let (width, height) = image.dimensions();
-
-            SourceImage {
-                width,
-                height,
-                pixels: image.into_raw().into_boxed_slice(),
-            }
-        })
-        .map_err(DitherError::from_image)
 }
 
 #[cfg(test)]

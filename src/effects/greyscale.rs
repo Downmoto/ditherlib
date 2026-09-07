@@ -21,6 +21,9 @@ impl Effect for Greyscale {
             .iter()
             .zip(output.as_chunks_mut::<4>().0)
         {
+            // ITU-R BT.709-6 section 3.2 defines luma weights of 0.2126,
+            // 0.7152, and 0.0722. Scaling by 10,000 keeps this integer-only;
+            // adding half the scale rounds the result to the nearest value.
             let luminance = (u32::from(input[0]) * 2126
                 + u32::from(input[1]) * 7152
                 + u32::from(input[2]) * 722
