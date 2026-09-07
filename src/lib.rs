@@ -1,8 +1,10 @@
 use std::{fmt, path::Path};
 
+mod effects;
 mod renderer;
 mod selection;
 
+pub use effects::Greyscale;
 pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
 
