@@ -2,6 +2,8 @@
 name = "ditherlib"
 version = "0.1.0"
 edition = "2024"
+description = "Non-destructive image effects and dithering for whole images and polygon selections"
+exclude = ["/*.jpg"]
 
 [features]
 default = ["jpeg", "png"]
