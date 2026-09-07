@@ -1,5 +1,9 @@
 use std::{fmt, path::Path};
 
+mod selection;
+
+pub use selection::{Mask, Point, Polygon, Selection};
+
 /// A result returned by Ditherlib operations.
 pub type Result<T> = std::result::Result<T, DitherError>;
 
@@ -13,13 +17,18 @@ pub enum ErrorKind {
     UnsupportedFormat,
     /// An image could not be decoded.
     Decode,
+    /// A polygon is malformed.
+    InvalidPolygon,
+    /// A mask's dimensions and coverage length do not agree.
+    DimensionMismatch,
 }
 
 /// An error returned by a Ditherlib operation.
 #[derive(Debug)]
 pub struct DitherError {
     kind: ErrorKind,
-    source: image::ImageError,
+    message: &'static str,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl DitherError {
@@ -28,32 +37,49 @@ impl DitherError {
         self.kind
     }
 
+    fn new(kind: ErrorKind, message: &'static str) -> Self {
+        Self {
+            kind,
+            message,
+            source: None,
+        }
+    }
+
     fn from_image(source: image::ImageError) -> Self {
         let kind = match &source {
             image::ImageError::IoError(_) => ErrorKind::FileAccess,
             image::ImageError::Unsupported(_) => ErrorKind::UnsupportedFormat,
             _ => ErrorKind::Decode,
         };
+        let message = match kind {
+            ErrorKind::FileAccess => "could not access image file",
+            ErrorKind::UnsupportedFormat => "unsupported image format",
+            ErrorKind::Decode => "could not decode image",
+            _ => unreachable!(),
+        };
 
-        Self { kind, source }
+        Self {
+            kind,
+            message,
+            source: Some(Box::new(source)),
+        }
     }
 }
 
 impl fmt::Display for DitherError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let context = match self.kind {
-            ErrorKind::FileAccess => "could not access image file",
-            ErrorKind::UnsupportedFormat => "unsupported image format",
-            ErrorKind::Decode => "could not decode image",
-        };
-
-        write!(formatter, "{context}: {}", self.source)
+        match &self.source {
+            Some(source) => write!(formatter, "{}: {source}", self.message),
+            None => formatter.write_str(self.message),
+        }
     }
 }
 
 impl std::error::Error for DitherError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
+        self.source
+            .as_ref()
+            .map(|source| source.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 
