@@ -172,6 +172,29 @@ impl Mask {
 
         Some(self.coverage[y as usize * self.width as usize + x as usize])
     }
+
+    /// Returns the smallest exclusive pixel bounds containing non-zero coverage.
+    pub(crate) fn coverage_bounds(&self) -> Option<(u32, u32, u32, u32)> {
+        let mut min_x = self.width;
+        let mut min_y = self.height;
+        let mut max_x = 0;
+        let mut max_y = 0;
+
+        for (index, &coverage) in self.coverage.iter().enumerate() {
+            if coverage == 0 {
+                continue;
+            }
+
+            let x = (index % self.width as usize) as u32;
+            let y = (index / self.width as usize) as u32;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x + 1);
+            max_y = max_y.max(y + 1);
+        }
+
+        (min_x < max_x && min_y < max_y).then_some((min_x, min_y, max_x, max_y))
+    }
 }
 
 /// Calculates the number of coverage values required for a mask.
@@ -204,8 +227,10 @@ fn vertices_are_collinear(vertices: &[Point]) -> bool {
 
 /// Rasterises a polygon into row-major coverage values using supersampling.
 fn rasterise_polygon(polygon: &Polygon, width: u32, height: u32, coverage: &mut [u8]) {
-    for y in 0..height {
-        for x in 0..width {
+    let (min_x, min_y, max_x, max_y) = polygon_pixel_bounds(polygon, width, height);
+
+    for y in min_y..max_y {
+        for x in min_x..max_x {
             let mut covered_samples = 0;
 
             for sample_y in 0..SAMPLES_PER_AXIS {
@@ -225,6 +250,28 @@ fn rasterise_polygon(polygon: &Polygon, width: u32, height: u32, coverage: &mut 
                 ((covered_samples * u32::from(u8::MAX) + SAMPLE_COUNT / 2) / SAMPLE_COUNT) as u8;
         }
     }
+}
+
+/// Finds the exclusive image bounds that can overlap a polygon.
+fn polygon_pixel_bounds(polygon: &Polygon, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for point in &polygon.vertices {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+
+    (
+        min_x.floor().clamp(0.0, width as f32) as u32,
+        min_y.floor().clamp(0.0, height as f32) as u32,
+        max_x.ceil().clamp(0.0, width as f32) as u32,
+        max_y.ceil().clamp(0.0, height as f32) as u32,
+    )
 }
 
 /// Tests a point against a polygon using the even-odd fill rule.
@@ -329,5 +376,26 @@ mod tests {
         let oversized = Mask::new(u32::MAX, u32::MAX, Vec::new())
             .expect_err("oversized dimensions should be rejected");
         assert_eq!(oversized.kind(), ErrorKind::DimensionMismatch);
+    }
+
+    #[test]
+    fn finds_covered_pixel_bounds() {
+        let mask = Mask::new(3, 2, vec![0, 1, 0, 0, 0, 2]).unwrap();
+
+        assert_eq!(mask.coverage_bounds(), Some((1, 0, 3, 2)));
+        assert_eq!(Mask::new(2, 2, vec![0; 4]).unwrap().coverage_bounds(), None);
+    }
+
+    #[test]
+    fn clips_polygon_rasterisation_to_the_image() {
+        let polygon = Polygon::new([
+            Point::new(-4.0, -4.0),
+            Point::new(-2.0, -4.0),
+            Point::new(-4.0, -2.0),
+        ])
+        .unwrap();
+        let mask = Selection::Polygon(polygon).rasterise(4, 4).unwrap();
+
+        assert_eq!(mask.coverage_bytes(), &[0; 16]);
     }
 }
