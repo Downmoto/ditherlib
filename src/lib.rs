@@ -1,7 +1,9 @@
 use std::{fmt, path::Path};
 
+mod renderer;
 mod selection;
 
+pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
 
 /// A result returned by Ditherlib operations.
@@ -21,13 +23,15 @@ pub enum ErrorKind {
     InvalidPolygon,
     /// A mask's dimensions and coverage length do not agree.
     DimensionMismatch,
+    /// An effect could not be rendered.
+    Effect,
 }
 
 /// An error returned by a Ditherlib operation.
 #[derive(Debug)]
 pub struct DitherError {
     kind: ErrorKind,
-    message: &'static str,
+    message: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -37,10 +41,11 @@ impl DitherError {
         self.kind
     }
 
-    fn new(kind: ErrorKind, message: &'static str) -> Self {
+    /// Creates an error with a stable category and descriptive message.
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
-            message,
+            message: message.into(),
             source: None,
         }
     }
@@ -60,7 +65,7 @@ impl DitherError {
 
         Self {
             kind,
-            message,
+            message: message.into(),
             source: Some(Box::new(source)),
         }
     }
@@ -70,7 +75,7 @@ impl fmt::Display for DitherError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.source {
             Some(source) => write!(formatter, "{}: {source}", self.message),
-            None => formatter.write_str(self.message),
+            None => formatter.write_str(&self.message),
         }
     }
 }
