@@ -5,7 +5,7 @@ mod io;
 mod renderer;
 mod selection;
 
-pub use effects::{Blur, Greyscale};
+pub use effects::{Blur, Greyscale, Palette, Threshold};
 pub use io::{read, write};
 pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
