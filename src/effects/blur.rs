@@ -71,6 +71,7 @@ impl Effect for Blur {
             bounds,
             crop_bounds,
             blurred.as_raw(),
+            mask,
         );
 
         Ok(())
@@ -131,12 +132,17 @@ fn copy_blurred_selection(
     selection: Bounds,
     crop: Bounds,
     blurred: &[u8],
+    mask: &Mask,
 ) {
     let crop_width = crop.2 - crop.0;
 
     for y in selection.1..selection.3 {
         for x in selection.0..selection.2 {
-            let image_index = (y as usize * image_width as usize + x as usize) * 4;
+            let pixel_index = y as usize * image_width as usize + x as usize;
+            if mask.coverage_bytes()[pixel_index] == 0 {
+                continue;
+            }
+            let image_index = pixel_index * 4;
             let crop_index =
                 ((y - crop.1) as usize * crop_width as usize + (x - crop.0) as usize) * 4;
             output[image_index..image_index + 3]

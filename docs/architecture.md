@@ -68,7 +68,7 @@ For each pipeline step, the renderer:
 
 1. Resolves the selection into a mask for the current image dimensions.
 2. Gives the effect read-only access to `current` and writable access to `scratch`.
-3. Ensures pixels outside the selection remain unchanged.
+3. Blends pixels with partial mask coverage along selection edges.
 4. Swaps `current` and `scratch`.
 
 Alternating buffers avoids allocating a new full image for every step. Effects always read from a stable input buffer, which prevents scan order from accidentally changing their source pixels.
@@ -86,7 +86,7 @@ Polygon vertices use floating-point image coordinates. A polygon is rasterised i
 - `255` is fully selected.
 - Intermediate values provide anti-aliased edges.
 
-The mask is independent of the effect, allowing one selection to be reused for greyscale, blur, and dithering. Rasterised masks may be cached within a render when the same selection and dimensions are reused.
+The mask retains the smallest pixel bounds containing non-zero coverage. Effects and edge compositing use these bounds to avoid scanning unrelated pixels. The mask remains independent of the effect, allowing one selection to be reused for greyscale, blur, and dithering.
 
 Future selection variants may include bitmap masks, inversion, feathering, and boolean combinations. These additions should preserve the same mask interface.
 
@@ -99,7 +99,7 @@ An effect receives:
 - A read-only selection mask
 - Its validated configuration
 
-The renderer owns the rule that pixels outside the mask remain unchanged. An effect can still inspect the mask when its algorithm depends on selection boundaries.
+The output buffer begins as a copy of the input. Effects write fully effected values only where mask coverage is non-zero, leaving exterior pixels unchanged. The renderer blends partial coverage along anti-aliased edges and skips this pass for whole-image selections.
 
 Built-in effects are grouped by responsibility:
 

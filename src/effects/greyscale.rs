@@ -12,26 +12,36 @@ impl Effect for Greyscale {
         &self,
         input: &[u8],
         output: &mut [u8],
-        _dimensions: (u32, u32),
-        _mask: &Mask,
+        dimensions: (u32, u32),
+        mask: &Mask,
     ) -> Result<()> {
-        for (input, output) in input
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(output.as_chunks_mut::<4>().0)
-        {
-            // ITU-R BT.709-6 section 3.2 defines luma weights of 0.2126,
-            // 0.7152, and 0.0722. Scaling by 10,000 keeps this integer-only;
-            // adding half the scale rounds the result to the nearest value.
-            let luminance = (u32::from(input[0]) * 2126
-                + u32::from(input[1]) * 7152
-                + u32::from(input[2]) * 722
-                + 5000)
-                / 10_000;
-            let luminance = luminance as u8;
+        let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+            return Ok(());
+        };
+        let width = dimensions.0 as usize;
 
-            *output = [luminance, luminance, luminance, input[3]];
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let pixel_index = y as usize * width + x as usize;
+                if mask.coverage_bytes()[pixel_index] == 0 {
+                    continue;
+                }
+                let byte_index = pixel_index * 4;
+                let input = &input[byte_index..byte_index + 4];
+
+                // ITU-R BT.709-6 section 3.2 defines luma weights of 0.2126,
+                // 0.7152, and 0.0722. Scaling by 10,000 keeps this integer-only;
+                // adding half the scale rounds the result to the nearest value.
+                let luminance = (u32::from(input[0]) * 2126
+                    + u32::from(input[1]) * 7152
+                    + u32::from(input[2]) * 722
+                    + 5000)
+                    / 10_000;
+                let luminance = luminance as u8;
+
+                output[byte_index..byte_index + 4]
+                    .copy_from_slice(&[luminance, luminance, luminance, input[3]]);
+            }
         }
 
         Ok(())

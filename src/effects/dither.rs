@@ -73,22 +73,27 @@ impl Effect for Threshold {
         &self,
         input: &[u8],
         output: &mut [u8],
-        _dimensions: (u32, u32),
+        dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        for ((input, output), &coverage) in input
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(output.as_chunks_mut::<4>().0)
-            .zip(mask.coverage_bytes())
-        {
-            if coverage == 0 {
-                continue;
-            }
+        let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+            return Ok(());
+        };
+        let width = dimensions.0 as usize;
 
-            let colour = self.palette.nearest_colour([input[0], input[1], input[2]]);
-            *output = [colour[0], colour[1], colour[2], input[3]];
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let pixel_index = y as usize * width + x as usize;
+                if mask.coverage_bytes()[pixel_index] == 0 {
+                    continue;
+                }
+                let byte_index = pixel_index * 4;
+                let input = &input[byte_index..byte_index + 4];
+
+                let colour = self.palette.nearest_colour([input[0], input[1], input[2]]);
+                output[byte_index..byte_index + 4]
+                    .copy_from_slice(&[colour[0], colour[1], colour[2], input[3]]);
+            }
         }
 
         Ok(())

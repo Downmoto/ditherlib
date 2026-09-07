@@ -99,15 +99,17 @@ impl Selection {
                 width,
                 height,
                 coverage: vec![u8::MAX; length].into_boxed_slice(),
+                coverage_bounds: (length > 0).then_some((0, 0, width, height)),
             }),
             Self::Polygon(polygon) => {
                 let mut coverage = vec![0; length];
-                rasterise_polygon(polygon, width, height, &mut coverage);
+                let coverage_bounds = rasterise_polygon(polygon, width, height, &mut coverage);
 
                 Ok(Mask {
                     width,
                     height,
                     coverage: coverage.into_boxed_slice(),
+                    coverage_bounds,
                 })
             }
         }
@@ -120,6 +122,7 @@ pub struct Mask {
     width: u32,
     height: u32,
     coverage: Box<[u8]>,
+    coverage_bounds: Option<(u32, u32, u32, u32)>,
 }
 
 impl Mask {
@@ -137,10 +140,13 @@ impl Mask {
             ));
         }
 
+        let coverage_bounds = find_coverage_bounds(width, &coverage);
+
         Ok(Self {
             width,
             height,
             coverage: coverage.into_boxed_slice(),
+            coverage_bounds,
         })
     }
 
@@ -175,26 +181,23 @@ impl Mask {
 
     /// Returns the smallest exclusive pixel bounds containing non-zero coverage.
     pub(crate) fn coverage_bounds(&self) -> Option<(u32, u32, u32, u32)> {
-        let mut min_x = self.width;
-        let mut min_y = self.height;
-        let mut max_x = 0;
-        let mut max_y = 0;
-
-        for (index, &coverage) in self.coverage.iter().enumerate() {
-            if coverage == 0 {
-                continue;
-            }
-
-            let x = (index % self.width as usize) as u32;
-            let y = (index / self.width as usize) as u32;
-            min_x = min_x.min(x);
-            min_y = min_y.min(y);
-            max_x = max_x.max(x + 1);
-            max_y = max_y.max(y + 1);
-        }
-
-        (min_x < max_x && min_y < max_y).then_some((min_x, min_y, max_x, max_y))
+        self.coverage_bounds
     }
+}
+
+/// Finds the smallest exclusive pixel bounds containing non-zero coverage.
+fn find_coverage_bounds(width: u32, coverage: &[u8]) -> Option<(u32, u32, u32, u32)> {
+    let mut bounds = None;
+
+    for (index, &coverage) in coverage.iter().enumerate() {
+        if coverage != 0 {
+            let x = (index % width as usize) as u32;
+            let y = (index / width as usize) as u32;
+            include_pixel(&mut bounds, x, y);
+        }
+    }
+
+    bounds
 }
 
 /// Calculates the number of coverage values required for a mask.
@@ -225,9 +228,15 @@ fn vertices_are_collinear(vertices: &[Point]) -> bool {
     })
 }
 
-/// Rasterises a polygon into row-major coverage values using supersampling.
-fn rasterise_polygon(polygon: &Polygon, width: u32, height: u32, coverage: &mut [u8]) {
+/// Rasterises a polygon and returns its non-zero exclusive coverage bounds.
+fn rasterise_polygon(
+    polygon: &Polygon,
+    width: u32,
+    height: u32,
+    coverage: &mut [u8],
+) -> Option<(u32, u32, u32, u32)> {
     let (min_x, min_y, max_x, max_y) = polygon_pixel_bounds(polygon, width, height);
+    let mut coverage_bounds = None;
 
     for y in min_y..max_y {
         for x in min_x..max_x {
@@ -246,10 +255,30 @@ fn rasterise_polygon(polygon: &Polygon, width: u32, height: u32, coverage: &mut 
                 }
             }
 
-            coverage[y as usize * width as usize + x as usize] =
+            let value =
                 ((covered_samples * u32::from(u8::MAX) + SAMPLE_COUNT / 2) / SAMPLE_COUNT) as u8;
+            coverage[y as usize * width as usize + x as usize] = value;
+
+            if value != 0 {
+                include_pixel(&mut coverage_bounds, x, y);
+            }
         }
     }
+
+    coverage_bounds
+}
+
+/// Expands exclusive bounds to contain a pixel.
+fn include_pixel(bounds: &mut Option<(u32, u32, u32, u32)>, x: u32, y: u32) {
+    *bounds = Some(match *bounds {
+        Some((min_x, min_y, max_x, max_y)) => (
+            min_x.min(x),
+            min_y.min(y),
+            max_x.max(x + 1),
+            max_y.max(y + 1),
+        ),
+        None => (x, y, x + 1, y + 1),
+    });
 }
 
 /// Finds the exclusive image bounds that can overlap a polygon.

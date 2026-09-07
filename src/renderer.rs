@@ -5,10 +5,10 @@ pub trait Effect {
     /// Writes effected RGBA8 pixels into `output`.
     ///
     /// `input` and `output` contain four row-major bytes per pixel and have the
-    /// supplied dimensions. `output` initially contains a copy of `input`. The
-    /// mask is provided for effects whose calculations depend on selection
-    /// boundaries. The renderer applies final mask coverage after this method
-    /// returns, preserving pixels outside the selection.
+    /// supplied dimensions. `output` initially contains a copy of `input`.
+    /// Implementations must leave pixels with zero mask coverage unchanged and
+    /// write the fully effected value for pixels with non-zero coverage. The
+    /// renderer blends partial mask coverage after this method returns.
     ///
     /// # Errors
     ///
@@ -113,7 +113,9 @@ impl Renderer {
         self.scratch.extend_from_slice(&self.current);
 
         effect.apply(&self.current, &mut self.scratch, dimensions, &mask)?;
-        composite_selection(&self.current, &mut self.scratch, &mask);
+        if matches!(selection, Selection::Polygon(_)) {
+            composite_selection(&self.current, &mut self.scratch, &mask);
+        }
 
         Ok(RenderedImage {
             width: dimensions.0,
@@ -123,17 +125,29 @@ impl Renderer {
     }
 }
 
-/// Applies mask coverage to effected pixels and restores unselected pixels.
+/// Blends effected pixels along an anti-aliased selection edge.
 fn composite_selection(input: &[u8], output: &mut [u8], mask: &Mask) {
-    for ((input, output), &coverage) in input
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(output.as_chunks_mut::<4>().0)
-        .zip(mask.coverage_bytes())
-    {
-        for channel in 0..4 {
-            output[channel] = blend(input[channel], output[channel], coverage);
+    let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+        return;
+    };
+    let width = mask.width() as usize;
+
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let pixel_index = y as usize * width + x as usize;
+            let coverage = mask.coverage_bytes()[pixel_index];
+            if coverage == 0 || coverage == u8::MAX {
+                continue;
+            }
+
+            let byte_index = pixel_index * 4;
+            for channel in 0..4 {
+                output[byte_index + channel] = blend(
+                    input[byte_index + channel],
+                    output[byte_index + channel],
+                    coverage,
+                );
+            }
         }
     }
 }
@@ -159,10 +173,17 @@ mod tests {
             _input: &[u8],
             output: &mut [u8],
             _dimensions: (u32, u32),
-            _mask: &crate::Mask,
+            mask: &crate::Mask,
         ) -> Result<()> {
-            for pixel in output.as_chunks_mut::<4>().0 {
-                *pixel = [255, 0, 0, 255];
+            for (pixel, &coverage) in output
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(mask.coverage_bytes())
+            {
+                if coverage != 0 {
+                    *pixel = [255, 0, 0, 255];
+                }
             }
 
             Ok(())
