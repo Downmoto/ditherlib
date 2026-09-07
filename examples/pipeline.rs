@@ -1,12 +1,12 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{Palette, Renderer, Selection, Threshold, read, write};
+use ditherlib::{Blur, OrderedDither, Palette, Pipeline, Renderer, Selection, read, write};
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
     let (Some(input), Some(output), None) = (arguments.next(), arguments.next(), arguments.next())
     else {
-        eprintln!("usage: threshold INPUT OUTPUT.png");
+        eprintln!("usage: pipeline INPUT OUTPUT.png");
         return ExitCode::FAILURE;
     };
 
@@ -21,7 +21,13 @@ fn main() -> ExitCode {
 
 fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     let source = read(input)?;
-    let effect = Threshold::new(Palette::black_and_white()).with_pixel_size(4)?;
-    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
+    let mut pipeline = Pipeline::new();
+    pipeline.add(Blur::new(2.0)?, Selection::All);
+    pipeline.add(
+        OrderedDither::new(Palette::black_and_white(), 4)?.with_pixel_size(4)?,
+        Selection::All,
+    );
+
+    let rendered = Renderer::new().render_pipeline(&source, &pipeline)?;
     write(output, &rendered)
 }

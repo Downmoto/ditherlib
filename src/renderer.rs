@@ -1,4 +1,4 @@
-use crate::{Mask, Result, Selection, SourceImage};
+use crate::{Mask, Pipeline, Result, Selection, SourceImage};
 
 /// An image effect that can be evaluated by a [`Renderer`].
 pub trait Effect {
@@ -105,10 +105,49 @@ impl Renderer {
         selection: &Selection,
     ) -> Result<RenderedImage> {
         let dimensions = source.dimensions();
-        let mask = selection.rasterise(dimensions.0, dimensions.1)?;
+        self.begin(source);
+        self.apply_step(effect, selection, dimensions)?;
 
+        Ok(self.rendered_image(dimensions))
+    }
+
+    /// Applies every pipeline step in order and returns a separately owned image.
+    ///
+    /// An empty pipeline returns an unchanged copy of `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a selection cannot be rasterised or an effect
+    /// cannot be evaluated.
+    pub fn render_pipeline(
+        &mut self,
+        source: &SourceImage,
+        pipeline: &Pipeline,
+    ) -> Result<RenderedImage> {
+        let dimensions = source.dimensions();
+        self.begin(source);
+
+        for step in pipeline.steps() {
+            self.apply_step(step.effect(), step.selection(), dimensions)?;
+        }
+
+        Ok(self.rendered_image(dimensions))
+    }
+
+    /// Resets the reusable buffers to a new immutable source.
+    fn begin(&mut self, source: &SourceImage) {
         self.current.clear();
         self.current.extend_from_slice(source.rgba8_bytes());
+    }
+
+    /// Applies one step and swaps the reusable input and output buffers.
+    fn apply_step(
+        &mut self,
+        effect: &dyn Effect,
+        selection: &Selection,
+        dimensions: (u32, u32),
+    ) -> Result<()> {
+        let mask = selection.rasterise(dimensions.0, dimensions.1)?;
         self.scratch.clear();
         self.scratch.extend_from_slice(&self.current);
 
@@ -116,12 +155,18 @@ impl Renderer {
         if matches!(selection, Selection::Polygon(_)) {
             composite_selection(&self.current, &mut self.scratch, &mask);
         }
+        std::mem::swap(&mut self.current, &mut self.scratch);
 
-        Ok(RenderedImage {
+        Ok(())
+    }
+
+    /// Copies the final reusable buffer into a caller-owned image.
+    fn rendered_image(&self, dimensions: (u32, u32)) -> RenderedImage {
+        RenderedImage {
             width: dimensions.0,
             height: dimensions.1,
-            pixels: self.scratch.clone().into_boxed_slice(),
-        })
+            pixels: self.current.clone().into_boxed_slice(),
+        }
     }
 }
 
@@ -163,7 +208,8 @@ fn blend(input: u8, effected: u8, coverage: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{Effect, Renderer};
-    use crate::{DitherError, ErrorKind, Point, Polygon, Result, Selection, SourceImage};
+    use crate::{DitherError, ErrorKind, Pipeline, Point, Polygon, Result, Selection, SourceImage};
+    use std::{cell::RefCell, rc::Rc};
 
     struct PaintRed;
 
@@ -201,6 +247,73 @@ mod tests {
             _mask: &crate::Mask,
         ) -> Result<()> {
             Err(DitherError::new(ErrorKind::Effect, "test effect failed"))
+        }
+    }
+
+    struct AddRed(u8);
+
+    impl Effect for AddRed {
+        fn apply(
+            &self,
+            _input: &[u8],
+            output: &mut [u8],
+            _dimensions: (u32, u32),
+            mask: &crate::Mask,
+        ) -> Result<()> {
+            for (pixel, &coverage) in output
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(mask.coverage_bytes())
+            {
+                if coverage != 0 {
+                    pixel[0] = pixel[0].saturating_add(self.0);
+                }
+            }
+
+            Ok(())
+        }
+    }
+
+    struct MultiplyRed(u8);
+
+    impl Effect for MultiplyRed {
+        fn apply(
+            &self,
+            _input: &[u8],
+            output: &mut [u8],
+            _dimensions: (u32, u32),
+            mask: &crate::Mask,
+        ) -> Result<()> {
+            for (pixel, &coverage) in output
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(mask.coverage_bytes())
+            {
+                if coverage != 0 {
+                    pixel[0] = pixel[0].saturating_mul(self.0);
+                }
+            }
+
+            Ok(())
+        }
+    }
+
+    struct RecordBuffers(Rc<RefCell<Vec<(usize, usize)>>>);
+
+    impl Effect for RecordBuffers {
+        fn apply(
+            &self,
+            input: &[u8],
+            output: &mut [u8],
+            _dimensions: (u32, u32),
+            _mask: &crate::Mask,
+        ) -> Result<()> {
+            self.0
+                .borrow_mut()
+                .push((input.as_ptr() as usize, output.as_ptr() as usize));
+            Ok(())
         }
     }
 
@@ -286,5 +399,79 @@ mod tests {
             .expect_err("the effect should fail");
 
         assert_eq!(error.kind(), ErrorKind::Effect);
+    }
+
+    #[test]
+    fn pipeline_applies_steps_in_order_and_supports_reordering() {
+        let source = source(1, 1, &[[10, 20, 30, 255]]);
+        let mut pipeline = Pipeline::new();
+        pipeline.add(AddRed(10), Selection::All);
+        pipeline.add(MultiplyRed(2), Selection::All);
+
+        let mut renderer = Renderer::new();
+        let added_then_multiplied = renderer.render_pipeline(&source, &pipeline).unwrap();
+        assert_eq!(added_then_multiplied.pixel(0, 0), Some([40, 20, 30, 255]));
+
+        pipeline.move_step(1, 0).unwrap();
+        let multiplied_then_added = renderer.render_pipeline(&source, &pipeline).unwrap();
+        assert_eq!(multiplied_then_added.pixel(0, 0), Some([30, 20, 30, 255]));
+    }
+
+    #[test]
+    fn empty_pipeline_returns_a_separate_source_identical_image() {
+        let source = source(2, 1, &[[1, 2, 3, 4], [5, 6, 7, 8]]);
+        let rendered = Renderer::new()
+            .render_pipeline(&source, &Pipeline::new())
+            .unwrap();
+
+        assert_eq!(rendered.rgba8_bytes(), source.rgba8_bytes());
+        assert_ne!(
+            rendered.rgba8_bytes().as_ptr(),
+            source.rgba8_bytes().as_ptr()
+        );
+    }
+
+    #[test]
+    fn removing_a_step_matches_a_pipeline_without_that_step() {
+        let source = source(1, 1, &[[10, 20, 30, 255]]);
+        let mut edited = Pipeline::new();
+        edited.add(AddRed(10), Selection::All);
+        edited.add(MultiplyRed(2), Selection::All);
+        edited.remove(0).unwrap();
+
+        let mut expected = Pipeline::new();
+        expected.add(MultiplyRed(2), Selection::All);
+
+        let mut renderer = Renderer::new();
+        let edited = renderer.render_pipeline(&source, &edited).unwrap();
+        let expected = renderer.render_pipeline(&source, &expected).unwrap();
+        assert_eq!(edited.rgba8_bytes(), expected.rgba8_bytes());
+    }
+
+    #[test]
+    fn alternates_buffers_for_odd_and_even_step_counts() {
+        let source = source(1, 1, &[[10, 20, 30, 255]]);
+        let records = Rc::new(RefCell::new(Vec::new()));
+        let mut pipeline = Pipeline::new();
+        for _ in 0..3 {
+            pipeline.add(RecordBuffers(Rc::clone(&records)), Selection::All);
+        }
+
+        let mut renderer = Renderer::new();
+        renderer.render_pipeline(&source, &pipeline).unwrap();
+        let odd = records.borrow();
+        assert_eq!(odd.len(), 3);
+        assert_ne!(odd[0].0, odd[0].1);
+        assert_eq!(odd[0].1, odd[1].0);
+        assert_eq!(odd[1].1, odd[2].0);
+        drop(odd);
+
+        pipeline.remove(2).unwrap();
+        records.borrow_mut().clear();
+        renderer.render_pipeline(&source, &pipeline).unwrap();
+        let even = records.borrow();
+        assert_eq!(even.len(), 2);
+        assert_ne!(even[0].0, even[0].1);
+        assert_eq!(even[0].1, even[1].0);
     }
 }

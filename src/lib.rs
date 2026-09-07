@@ -2,11 +2,13 @@ use std::fmt;
 
 mod effects;
 mod io;
+mod pipeline;
 mod renderer;
 mod selection;
 
 pub use effects::{Atkinson, Blur, FloydSteinberg, Greyscale, OrderedDither, Palette, Threshold};
 pub use io::{read, write};
+pub use pipeline::{Pipeline, PipelineStep};
 pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
 

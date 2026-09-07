@@ -49,8 +49,22 @@ impl Palette {
         Ok(Self { colours })
     }
 
+    /// Creates a palette containing black, white, and one RGB colour.
+    ///
+    /// Supplying black or white produces the same two entries as
+    /// [`Palette::black_and_white`].
+    pub fn monochrome(colour: [u8; 3]) -> Self {
+        if colour == [0, 0, 0] || colour == [255, 255, 255] {
+            return Self::black_and_white();
+        }
+
+        Self {
+            colours: Box::new([[0, 0, 0], colour, [255, 255, 255]]),
+        }
+    }
+
     /// Creates a palette containing black and white.
-    pub fn monochrome() -> Self {
+    pub fn black_and_white() -> Self {
         Self {
             colours: Box::new([[0, 0, 0], [255, 255, 255]]),
         }
@@ -683,10 +697,27 @@ mod tests {
         assert_eq!(palette.nearest_colour([200, 10, 40]), [255, 0, 0]);
         assert_eq!(palette.nearest_colour([40, 10, 200]), [0, 0, 255]);
         assert_eq!(palette.nearest_colour([127, 0, 127]), [255, 0, 0]);
+
+        assert_eq!(
+            Palette::monochrome([1, 2, 3]).colours(),
+            &[[0, 0, 0], [1, 2, 3], [255, 255, 255]]
+        );
+        assert_eq!(
+            Palette::monochrome([0, 0, 0]).colours(),
+            &[[0, 0, 0], [255, 255, 255]]
+        );
+        assert_eq!(
+            Palette::monochrome([255, 255, 255]).colours(),
+            &[[0, 0, 0], [255, 255, 255]]
+        );
+        assert_eq!(
+            Palette::black_and_white().colours(),
+            &[[0, 0, 0], [255, 255, 255]]
+        );
     }
 
     #[test]
-    fn thresholds_exact_monochrome_pixels_and_preserves_alpha() {
+    fn thresholds_exact_black_and_white_pixels_and_preserves_alpha() {
         let source = source(
             3,
             1,
@@ -695,13 +726,33 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &Threshold::new(Palette::monochrome()),
+                &Threshold::new(Palette::black_and_white()),
                 &Selection::All,
             )
             .unwrap();
 
         assert_eq!(rendered.pixel(0, 0), Some([0, 0, 0, 1]));
         assert_eq!(rendered.pixel(1, 0), Some([255, 255, 255, 2]));
+        assert_eq!(rendered.pixel(2, 0), Some([255, 255, 255, 3]));
+    }
+
+    #[test]
+    fn thresholds_monochrome_with_black_colour_and_white() {
+        let source = source(
+            3,
+            1,
+            &[[10, 10, 10, 1], [240, 10, 10, 2], [250, 250, 250, 3]],
+        );
+        let rendered = Renderer::new()
+            .render(
+                &source,
+                &Threshold::new(Palette::monochrome([255, 0, 0])),
+                &Selection::All,
+            )
+            .unwrap();
+
+        assert_eq!(rendered.pixel(0, 0), Some([0, 0, 0, 1]));
+        assert_eq!(rendered.pixel(1, 0), Some([255, 0, 0, 2]));
         assert_eq!(rendered.pixel(2, 0), Some([255, 255, 255, 3]));
     }
 
@@ -730,7 +781,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &Threshold::new(Palette::monochrome()),
+                &Threshold::new(Palette::black_and_white()),
                 &Selection::Polygon(polygon),
             )
             .unwrap();
@@ -744,7 +795,7 @@ mod tests {
     fn validates_bayer_matrix_sizes() {
         for size in [2, 4, 8] {
             assert_eq!(
-                OrderedDither::new(Palette::monochrome(), size)
+                OrderedDither::new(Palette::black_and_white(), size)
                     .unwrap()
                     .matrix_size(),
                 size
@@ -753,7 +804,7 @@ mod tests {
 
         for size in [0, 1, 3, 16] {
             assert_eq!(
-                OrderedDither::new(Palette::monochrome(), size)
+                OrderedDither::new(Palette::black_and_white(), size)
                     .unwrap_err()
                     .kind(),
                 ErrorKind::InvalidParameter
@@ -792,7 +843,7 @@ mod tests {
     fn renders_exact_pixels_for_each_bayer_size() {
         for size in [2, 4, 8] {
             let source = source(size.into(), 1, &vec![[128, 128, 128, 90]; size.into()]);
-            let effect = OrderedDither::new(Palette::monochrome(), size).unwrap();
+            let effect = OrderedDither::new(Palette::black_and_white(), size).unwrap();
             let rendered = Renderer::new()
                 .render(&source, &effect, &Selection::All)
                 .unwrap();
@@ -807,7 +858,7 @@ mod tests {
     #[test]
     fn keeps_polygon_patterns_anchored_to_image_coordinates() {
         let source = source(4, 1, &[[128, 128, 128, 80]; 4]);
-        let effect = OrderedDither::new(Palette::monochrome(), 4).unwrap();
+        let effect = OrderedDither::new(Palette::black_and_white(), 4).unwrap();
         let all = Renderer::new()
             .render(&source, &effect, &Selection::All)
             .unwrap();
@@ -856,7 +907,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &FloydSteinberg::new(Palette::monochrome()),
+                &FloydSteinberg::new(Palette::black_and_white()),
                 &Selection::All,
             )
             .unwrap();
@@ -880,7 +931,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &FloydSteinberg::new(Palette::monochrome()),
+                &FloydSteinberg::new(Palette::black_and_white()),
                 &Selection::Polygon(polygon),
             )
             .unwrap();
@@ -899,7 +950,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &FloydSteinberg::new(Palette::monochrome()),
+                &FloydSteinberg::new(Palette::black_and_white()),
                 &Selection::All,
             )
             .unwrap();
@@ -923,7 +974,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &Atkinson::new(Palette::monochrome()),
+                &Atkinson::new(Palette::black_and_white()),
                 &Selection::All,
             )
             .unwrap();
@@ -940,7 +991,7 @@ mod tests {
         let mut output = input;
         let mask = Mask::new(3, 1, vec![255, 0, 255]).unwrap();
 
-        Atkinson::new(Palette::monochrome())
+        Atkinson::new(Palette::black_and_white())
             .apply(&input, &mut output, (3, 1), &mask)
             .unwrap();
 
@@ -953,7 +1004,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &Atkinson::new(Palette::monochrome()),
+                &Atkinson::new(Palette::black_and_white()),
                 &Selection::All,
             )
             .unwrap();
@@ -978,7 +1029,7 @@ mod tests {
             ],
         );
 
-        let floyd = FloydSteinberg::new(Palette::monochrome());
+        let floyd = FloydSteinberg::new(Palette::black_and_white());
         let first = Renderer::new()
             .render(&source, &floyd, &Selection::All)
             .unwrap();
@@ -987,7 +1038,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
 
-        let atkinson = Atkinson::new(Palette::monochrome());
+        let atkinson = Atkinson::new(Palette::black_and_white());
         let first = Renderer::new()
             .render(&source, &atkinson, &Selection::All)
             .unwrap();
@@ -999,9 +1050,9 @@ mod tests {
 
     #[test]
     fn validates_dither_pixel_sizes() {
-        assert_eq!(Threshold::new(Palette::monochrome()).pixel_size(), 1);
+        assert_eq!(Threshold::new(Palette::black_and_white()).pixel_size(), 1);
         assert_eq!(
-            Threshold::new(Palette::monochrome())
+            Threshold::new(Palette::black_and_white())
                 .with_pixel_size(3)
                 .unwrap()
                 .pixel_size(),
@@ -1009,17 +1060,17 @@ mod tests {
         );
 
         let errors = [
-            Threshold::new(Palette::monochrome())
+            Threshold::new(Palette::black_and_white())
                 .with_pixel_size(0)
                 .unwrap_err(),
-            OrderedDither::new(Palette::monochrome(), 2)
+            OrderedDither::new(Palette::black_and_white(), 2)
                 .unwrap()
                 .with_pixel_size(0)
                 .unwrap_err(),
-            FloydSteinberg::new(Palette::monochrome())
+            FloydSteinberg::new(Palette::black_and_white())
                 .with_pixel_size(0)
                 .unwrap_err(),
-            Atkinson::new(Palette::monochrome())
+            Atkinson::new(Palette::black_and_white())
                 .with_pixel_size(0)
                 .unwrap_err(),
         ];
@@ -1042,7 +1093,7 @@ mod tests {
                 [255, 255, 255, 4],
             ],
         );
-        let effect = Threshold::new(Palette::monochrome())
+        let effect = Threshold::new(Palette::black_and_white())
             .with_pixel_size(2)
             .unwrap();
         let rendered = Renderer::new()
@@ -1058,7 +1109,7 @@ mod tests {
     #[test]
     fn ordered_dithering_scales_bayer_cells() {
         let source = source(4, 1, &[[128, 128, 128, 9]; 4]);
-        let effect = OrderedDither::new(Palette::monochrome(), 2)
+        let effect = OrderedDither::new(Palette::black_and_white(), 2)
             .unwrap()
             .with_pixel_size(2)
             .unwrap();
@@ -1082,7 +1133,7 @@ mod tests {
             Point::new(3.0, 1.0),
         ])
         .unwrap();
-        let effect = OrderedDither::new(Palette::monochrome(), 2)
+        let effect = OrderedDither::new(Palette::black_and_white(), 2)
             .unwrap()
             .with_pixel_size(2)
             .unwrap();
@@ -1102,10 +1153,10 @@ mod tests {
             .map(|alpha| [100, 100, 100, alpha])
             .collect::<Vec<_>>();
         let source = source(8, 1, &pixels);
-        let floyd = FloydSteinberg::new(Palette::monochrome())
+        let floyd = FloydSteinberg::new(Palette::black_and_white())
             .with_pixel_size(2)
             .unwrap();
-        let atkinson = Atkinson::new(Palette::monochrome())
+        let atkinson = Atkinson::new(Palette::black_and_white())
             .with_pixel_size(2)
             .unwrap();
 
