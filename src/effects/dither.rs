@@ -1,5 +1,17 @@
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
 
+const FIXED_SCALE: i32 = 256;
+const FLOYD_STEINBERG_NEIGHBOURS: &[(i64, i64, i32)] =
+    &[(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)];
+const ATKINSON_NEIGHBOURS: &[(i64, i64, i32)] = &[
+    (1, 0, 1),
+    (2, 0, 1),
+    (-1, 1, 1),
+    (0, 1, 1),
+    (1, 1, 1),
+    (0, 2, 1),
+];
+
 /// A non-empty collection of RGB colours available to a dithering effect.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Palette {
@@ -179,6 +191,197 @@ impl Effect for OrderedDither {
     }
 }
 
+/// Applies Floyd-Steinberg error-diffusion dithering.
+///
+/// Pixels are processed top to bottom and left to right. Quantisation error is
+/// distributed only to later pixels with non-zero mask coverage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FloydSteinberg {
+    palette: Palette,
+}
+
+impl FloydSteinberg {
+    /// Creates Floyd-Steinberg dithering with the supplied palette.
+    pub const fn new(palette: Palette) -> Self {
+        Self { palette }
+    }
+
+    /// Returns the target palette.
+    pub const fn palette(&self) -> &Palette {
+        &self.palette
+    }
+}
+
+impl Effect for FloydSteinberg {
+    fn apply(
+        &self,
+        input: &[u8],
+        output: &mut [u8],
+        dimensions: (u32, u32),
+        mask: &Mask,
+    ) -> Result<()> {
+        diffuse_error(
+            input,
+            output,
+            dimensions,
+            mask,
+            &self.palette,
+            FLOYD_STEINBERG_NEIGHBOURS,
+            16,
+        );
+        Ok(())
+    }
+}
+
+/// Applies Atkinson error-diffusion dithering.
+///
+/// Pixels are processed top to bottom and left to right. Quantisation error is
+/// distributed only to later pixels with non-zero mask coverage, and two-pixel
+/// taps cannot jump across an unselected pixel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Atkinson {
+    palette: Palette,
+}
+
+impl Atkinson {
+    /// Creates Atkinson dithering with the supplied palette.
+    pub const fn new(palette: Palette) -> Self {
+        Self { palette }
+    }
+
+    /// Returns the target palette.
+    pub const fn palette(&self) -> &Palette {
+        &self.palette
+    }
+}
+
+impl Effect for Atkinson {
+    fn apply(
+        &self,
+        input: &[u8],
+        output: &mut [u8],
+        dimensions: (u32, u32),
+        mask: &Mask,
+    ) -> Result<()> {
+        diffuse_error(
+            input,
+            output,
+            dimensions,
+            mask,
+            &self.palette,
+            ATKINSON_NEIGHBOURS,
+            8,
+        );
+        Ok(())
+    }
+}
+
+/// Quantises selected pixels and distributes their errors to later neighbours.
+fn diffuse_error(
+    input: &[u8],
+    output: &mut [u8],
+    dimensions: (u32, u32),
+    mask: &Mask,
+    palette: &Palette,
+    neighbours: &[(i64, i64, i32)],
+    divisor: i32,
+) {
+    let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+        return;
+    };
+    let image_width = dimensions.0 as usize;
+    let working_width = (max_x - min_x) as usize;
+    let mut working = Vec::with_capacity(working_width * (max_y - min_y) as usize);
+
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let byte_index = (y as usize * image_width + x as usize) * 4;
+            working.push([
+                i32::from(input[byte_index]) * FIXED_SCALE,
+                i32::from(input[byte_index + 1]) * FIXED_SCALE,
+                i32::from(input[byte_index + 2]) * FIXED_SCALE,
+            ]);
+        }
+    }
+
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let pixel_index = y as usize * image_width + x as usize;
+            if mask.coverage_bytes()[pixel_index] == 0 {
+                continue;
+            }
+
+            let working_index = (y - min_y) as usize * working_width + (x - min_x) as usize;
+            let adjusted =
+                working[working_index].map(|channel| channel.clamp(0, 255 * FIXED_SCALE));
+            let colour = palette.nearest_colour(
+                adjusted.map(|channel| ((channel + FIXED_SCALE / 2) / FIXED_SCALE) as u8),
+            );
+            let byte_index = pixel_index * 4;
+            output[byte_index..byte_index + 4].copy_from_slice(&[
+                colour[0],
+                colour[1],
+                colour[2],
+                input[byte_index + 3],
+            ]);
+            let error = [
+                adjusted[0] - i32::from(colour[0]) * FIXED_SCALE,
+                adjusted[1] - i32::from(colour[1]) * FIXED_SCALE,
+                adjusted[2] - i32::from(colour[2]) * FIXED_SCALE,
+            ];
+
+            for &(offset_x, offset_y, weight) in neighbours {
+                let neighbour_x = i64::from(x) + offset_x;
+                let neighbour_y = i64::from(y) + offset_y;
+                if neighbour_x < i64::from(min_x)
+                    || neighbour_x >= i64::from(max_x)
+                    || neighbour_y < i64::from(min_y)
+                    || neighbour_y >= i64::from(max_y)
+                {
+                    continue;
+                }
+
+                let neighbour_x = neighbour_x as u32;
+                let neighbour_y = neighbour_y as u32;
+                let neighbour_pixel = neighbour_y as usize * image_width + neighbour_x as usize;
+                if mask.coverage_bytes()[neighbour_pixel] == 0 {
+                    continue;
+                }
+                if !diffusion_path_is_selected(mask, image_width, x, y, offset_x, offset_y) {
+                    continue;
+                }
+
+                let neighbour_index =
+                    (neighbour_y - min_y) as usize * working_width + (neighbour_x - min_x) as usize;
+                for channel in 0..3 {
+                    working[neighbour_index][channel] += error[channel] * weight / divisor;
+                }
+            }
+        }
+    }
+}
+
+/// Prevents two-pixel diffusion taps from jumping across an unselected pixel.
+fn diffusion_path_is_selected(
+    mask: &Mask,
+    image_width: usize,
+    x: u32,
+    y: u32,
+    offset_x: i64,
+    offset_y: i64,
+) -> bool {
+    let middle = match (offset_x, offset_y) {
+        (-2 | 2, 0) => Some((i64::from(x) + offset_x / 2, i64::from(y))),
+        (0, -2 | 2) => Some((i64::from(x), i64::from(y) + offset_y / 2)),
+        _ => None,
+    };
+
+    middle.is_none_or(|(x, y)| {
+        let pixel_index = y as usize * image_width + x as usize;
+        mask.coverage_bytes()[pixel_index] != 0
+    })
+}
+
 /// Adjusts RGB channels around the Bayer threshold before palette matching.
 fn adjust_colour(colour: [u8; 3], threshold: u8, matrix_size: u8) -> [u8; 3] {
     let levels = i32::from(matrix_size).pow(2);
@@ -220,8 +423,8 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{OrderedDither, Palette, Threshold, bayer_value};
-    use crate::{ErrorKind, Point, Polygon, Renderer, Selection, SourceImage};
+    use super::{Atkinson, FloydSteinberg, OrderedDither, Palette, Threshold, bayer_value};
+    use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
     /// Creates an immutable image from test pixels.
     fn source(width: u32, height: u32, pixels: &[[u8; 4]]) -> SourceImage {
@@ -411,6 +614,153 @@ mod tests {
             .render(&source, &effect, &Selection::All)
             .unwrap();
 
+        assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+    }
+
+    #[test]
+    fn floyd_steinberg_produces_exact_pixels() {
+        let source = source(4, 1, &[[100, 100, 100, 70]; 4]);
+        let rendered = Renderer::new()
+            .render(
+                &source,
+                &FloydSteinberg::new(Palette::monochrome()),
+                &Selection::All,
+            )
+            .unwrap();
+
+        assert_eq!(
+            rendered.rgba8_bytes(),
+            &[0, 0, 0, 70, 255, 255, 255, 70, 0, 0, 0, 70, 0, 0, 0, 70,]
+        );
+    }
+
+    #[test]
+    fn floyd_steinberg_does_not_import_error_across_a_polygon_boundary() {
+        let source = source(2, 1, &[[100, 100, 100, 20]; 2]);
+        let polygon = Polygon::new([
+            Point::new(1.0, 0.0),
+            Point::new(2.0, 0.0),
+            Point::new(2.0, 1.0),
+            Point::new(1.0, 1.0),
+        ])
+        .unwrap();
+        let rendered = Renderer::new()
+            .render(
+                &source,
+                &FloydSteinberg::new(Palette::monochrome()),
+                &Selection::Polygon(polygon),
+            )
+            .unwrap();
+
+        assert_eq!(rendered.pixel(0, 0), Some([100, 100, 100, 20]));
+        assert_eq!(rendered.pixel(1, 0), Some([0, 0, 0, 20]));
+    }
+
+    #[test]
+    fn floyd_steinberg_handles_narrow_edge_selections() {
+        let source = source(
+            1,
+            3,
+            &[[80, 80, 80, 1], [120, 120, 120, 2], [160, 160, 160, 3]],
+        );
+        let rendered = Renderer::new()
+            .render(
+                &source,
+                &FloydSteinberg::new(Palette::monochrome()),
+                &Selection::All,
+            )
+            .unwrap();
+
+        assert_eq!(rendered.dimensions(), (1, 3));
+        assert_eq!(
+            rendered
+                .rgba8_bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|pixel| pixel[3])
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn atkinson_produces_exact_pixels() {
+        let source = source(4, 1, &[[100, 100, 100, 70]; 4]);
+        let rendered = Renderer::new()
+            .render(
+                &source,
+                &Atkinson::new(Palette::monochrome()),
+                &Selection::All,
+            )
+            .unwrap();
+
+        assert_eq!(
+            rendered.rgba8_bytes(),
+            &[0, 0, 0, 70, 0, 0, 0, 70, 0, 0, 0, 70, 255, 255, 255, 70,]
+        );
+    }
+
+    #[test]
+    fn atkinson_does_not_jump_unselected_gaps() {
+        let input = [100, 100, 100, 1, 0, 0, 0, 2, 120, 120, 120, 3];
+        let mut output = input;
+        let mask = Mask::new(3, 1, vec![255, 0, 255]).unwrap();
+
+        Atkinson::new(Palette::monochrome())
+            .apply(&input, &mut output, (3, 1), &mask)
+            .unwrap();
+
+        assert_eq!(output, [0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3]);
+    }
+
+    #[test]
+    fn atkinson_handles_narrow_image_edges() {
+        let source = source(1, 2, &[[100, 100, 100, 4], [140, 140, 140, 5]]);
+        let rendered = Renderer::new()
+            .render(
+                &source,
+                &Atkinson::new(Palette::monochrome()),
+                &Selection::All,
+            )
+            .unwrap();
+
+        assert_eq!(rendered.dimensions(), (1, 2));
+        assert_eq!(rendered.pixel(0, 0).unwrap()[3], 4);
+        assert_eq!(rendered.pixel(0, 1).unwrap()[3], 5);
+    }
+
+    #[test]
+    fn error_diffusion_is_repeatable() {
+        let source = source(
+            3,
+            2,
+            &[
+                [30, 60, 90, 1],
+                [70, 100, 130, 2],
+                [110, 140, 170, 3],
+                [150, 180, 210, 4],
+                [190, 220, 250, 5],
+                [230, 200, 170, 6],
+            ],
+        );
+
+        let floyd = FloydSteinberg::new(Palette::monochrome());
+        let first = Renderer::new()
+            .render(&source, &floyd, &Selection::All)
+            .unwrap();
+        let second = Renderer::new()
+            .render(&source, &floyd, &Selection::All)
+            .unwrap();
+        assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+
+        let atkinson = Atkinson::new(Palette::monochrome());
+        let first = Renderer::new()
+            .render(&source, &atkinson, &Selection::All)
+            .unwrap();
+        let second = Renderer::new()
+            .render(&source, &atkinson, &Selection::All)
+            .unwrap();
         assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
     }
 }
