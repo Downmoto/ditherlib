@@ -1,74 +1,84 @@
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
 
 const FIXED_SCALE: i32 = 256;
-const FLOYD_STEINBERG: &[(i64, i64, i32)] = &[(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)];
-const ATKINSON: &[(i64, i64, i32)] = &[
-    (1, 0, 1),
-    (2, 0, 1),
-    (-1, 1, 1),
-    (0, 1, 1),
-    (1, 1, 1),
-    (0, 2, 1),
+const DIFFUSION_STRENGTH_SCALE: u16 = 256;
+const FLOYD_STEINBERG: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 7),
+    DiffusionTap::new(-1, 1, 3),
+    DiffusionTap::new(0, 1, 5),
+    DiffusionTap::new(1, 1, 1),
 ];
-const JARVIS_JUDICE_NINKE: &[(i64, i64, i32)] = &[
-    (1, 0, 7),
-    (2, 0, 5),
-    (-2, 1, 3),
-    (-1, 1, 5),
-    (0, 1, 7),
-    (1, 1, 5),
-    (2, 1, 3),
-    (-2, 2, 1),
-    (-1, 2, 3),
-    (0, 2, 5),
-    (1, 2, 3),
-    (2, 2, 1),
+const ATKINSON: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 1),
+    DiffusionTap::new(2, 0, 1),
+    DiffusionTap::new(-1, 1, 1),
+    DiffusionTap::new(0, 1, 1),
+    DiffusionTap::new(1, 1, 1),
+    DiffusionTap::new(0, 2, 1),
 ];
-const STUCKI: &[(i64, i64, i32)] = &[
-    (1, 0, 8),
-    (2, 0, 4),
-    (-2, 1, 2),
-    (-1, 1, 4),
-    (0, 1, 8),
-    (1, 1, 4),
-    (2, 1, 2),
-    (-2, 2, 1),
-    (-1, 2, 2),
-    (0, 2, 4),
-    (1, 2, 2),
-    (2, 2, 1),
+const JARVIS_JUDICE_NINKE: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 7),
+    DiffusionTap::new(2, 0, 5),
+    DiffusionTap::new(-2, 1, 3),
+    DiffusionTap::new(-1, 1, 5),
+    DiffusionTap::new(0, 1, 7),
+    DiffusionTap::new(1, 1, 5),
+    DiffusionTap::new(2, 1, 3),
+    DiffusionTap::new(-2, 2, 1),
+    DiffusionTap::new(-1, 2, 3),
+    DiffusionTap::new(0, 2, 5),
+    DiffusionTap::new(1, 2, 3),
+    DiffusionTap::new(2, 2, 1),
 ];
-const BURKES: &[(i64, i64, i32)] = &[
-    (1, 0, 8),
-    (2, 0, 4),
-    (-2, 1, 2),
-    (-1, 1, 4),
-    (0, 1, 8),
-    (1, 1, 4),
-    (2, 1, 2),
+const STUCKI: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 8),
+    DiffusionTap::new(2, 0, 4),
+    DiffusionTap::new(-2, 1, 2),
+    DiffusionTap::new(-1, 1, 4),
+    DiffusionTap::new(0, 1, 8),
+    DiffusionTap::new(1, 1, 4),
+    DiffusionTap::new(2, 1, 2),
+    DiffusionTap::new(-2, 2, 1),
+    DiffusionTap::new(-1, 2, 2),
+    DiffusionTap::new(0, 2, 4),
+    DiffusionTap::new(1, 2, 2),
+    DiffusionTap::new(2, 2, 1),
 ];
-const SIERRA: &[(i64, i64, i32)] = &[
-    (1, 0, 5),
-    (2, 0, 3),
-    (-2, 1, 2),
-    (-1, 1, 4),
-    (0, 1, 5),
-    (1, 1, 4),
-    (2, 1, 2),
-    (-1, 2, 2),
-    (0, 2, 3),
-    (1, 2, 2),
+const BURKES: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 8),
+    DiffusionTap::new(2, 0, 4),
+    DiffusionTap::new(-2, 1, 2),
+    DiffusionTap::new(-1, 1, 4),
+    DiffusionTap::new(0, 1, 8),
+    DiffusionTap::new(1, 1, 4),
+    DiffusionTap::new(2, 1, 2),
 ];
-const TWO_ROW_SIERRA: &[(i64, i64, i32)] = &[
-    (1, 0, 4),
-    (2, 0, 3),
-    (-2, 1, 1),
-    (-1, 1, 2),
-    (0, 1, 3),
-    (1, 1, 2),
-    (2, 1, 1),
+const SIERRA: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 5),
+    DiffusionTap::new(2, 0, 3),
+    DiffusionTap::new(-2, 1, 2),
+    DiffusionTap::new(-1, 1, 4),
+    DiffusionTap::new(0, 1, 5),
+    DiffusionTap::new(1, 1, 4),
+    DiffusionTap::new(2, 1, 2),
+    DiffusionTap::new(-1, 2, 2),
+    DiffusionTap::new(0, 2, 3),
+    DiffusionTap::new(1, 2, 2),
 ];
-const SIERRA_LITE: &[(i64, i64, i32)] = &[(1, 0, 2), (-1, 1, 1), (0, 1, 1)];
+const TWO_ROW_SIERRA: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 4),
+    DiffusionTap::new(2, 0, 3),
+    DiffusionTap::new(-2, 1, 1),
+    DiffusionTap::new(-1, 1, 2),
+    DiffusionTap::new(0, 1, 3),
+    DiffusionTap::new(1, 1, 2),
+    DiffusionTap::new(2, 1, 1),
+];
+const SIERRA_LITE: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 2),
+    DiffusionTap::new(-1, 1, 1),
+    DiffusionTap::new(0, 1, 1),
+];
 
 /// An RGB colour with 8-bit channels.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -447,6 +457,43 @@ impl Effect for OrderedDither {
     }
 }
 
+/// A weighted destination in an error-diffusion kernel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiffusionTap {
+    offset_x: i32,
+    offset_y: i32,
+    weight: u32,
+}
+
+impl DiffusionTap {
+    /// Creates a diffusion tap relative to the pixel being quantised.
+    ///
+    /// [`DiffusionKernel::new`] validates that the tap points to a pixel later
+    /// in the raster scan and that `weight` is greater than zero.
+    pub const fn new(offset_x: i32, offset_y: i32, weight: u32) -> Self {
+        Self {
+            offset_x,
+            offset_y,
+            weight,
+        }
+    }
+
+    /// Returns the horizontal offset from the current pixel.
+    pub const fn offset_x(&self) -> i32 {
+        self.offset_x
+    }
+
+    /// Returns the vertical offset from the current pixel.
+    pub const fn offset_y(&self) -> i32 {
+        self.offset_y
+    }
+
+    /// Returns the error weight applied at this offset.
+    pub const fn weight(&self) -> u32 {
+        self.weight
+    }
+}
+
 /// An error-diffusion weight preset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -469,6 +516,110 @@ pub enum DiffusionAlgorithm {
     SierraLite,
 }
 
+impl DiffusionAlgorithm {
+    /// Returns this preset as a configurable diffusion kernel.
+    pub fn kernel(self) -> DiffusionKernel {
+        let (taps, divisor) = self.specification();
+        DiffusionKernel {
+            taps: taps.into(),
+            divisor,
+            preset: Some(self),
+        }
+    }
+
+    fn specification(self) -> (&'static [DiffusionTap], u32) {
+        match self {
+            Self::FloydSteinberg => (FLOYD_STEINBERG, 16),
+            Self::Atkinson => (ATKINSON, 8),
+            Self::JarvisJudiceNinke => (JARVIS_JUDICE_NINKE, 48),
+            Self::Stucki => (STUCKI, 42),
+            Self::Burkes => (BURKES, 32),
+            Self::Sierra => (SIERRA, 32),
+            Self::TwoRowSierra => (TWO_ROW_SIERRA, 16),
+            Self::SierraLite => (SIERRA_LITE, 4),
+        }
+    }
+}
+
+/// A validated set of weights used to distribute quantisation error.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiffusionKernel {
+    taps: Box<[DiffusionTap]>,
+    divisor: u32,
+    preset: Option<DiffusionAlgorithm>,
+}
+
+impl DiffusionKernel {
+    /// Creates a custom diffusion kernel.
+    ///
+    /// Taps on the current row must have a positive horizontal offset. Taps on
+    /// later rows may use any horizontal offset. All weights and the divisor
+    /// must be greater than zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when the kernel has no taps, its
+    /// divisor or a weight is zero, or a tap does not point forward in a raster
+    /// scan.
+    pub fn new(taps: impl Into<Box<[DiffusionTap]>>, divisor: u32) -> Result<Self> {
+        let taps = taps.into();
+        if taps.is_empty() {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "a diffusion kernel requires at least one tap",
+            ));
+        }
+        if divisor == 0 {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "a diffusion kernel divisor must be greater than zero",
+            ));
+        }
+        if taps.iter().any(|tap| tap.weight == 0) {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "diffusion tap weights must be greater than zero",
+            ));
+        }
+        if taps
+            .iter()
+            .any(|tap| tap.offset_y < 0 || (tap.offset_y == 0 && tap.offset_x <= 0))
+        {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "diffusion taps must point forward in a raster scan",
+            ));
+        }
+
+        Ok(Self {
+            taps,
+            divisor,
+            preset: None,
+        })
+    }
+
+    /// Returns the weighted destinations in the kernel.
+    pub fn taps(&self) -> &[DiffusionTap] {
+        &self.taps
+    }
+
+    /// Returns the divisor applied to the tap weights.
+    pub const fn divisor(&self) -> u32 {
+        self.divisor
+    }
+
+    /// Returns the built-in preset represented by this kernel, if any.
+    pub const fn preset(&self) -> Option<DiffusionAlgorithm> {
+        self.preset
+    }
+}
+
+impl From<DiffusionAlgorithm> for DiffusionKernel {
+    fn from(algorithm: DiffusionAlgorithm) -> Self {
+        algorithm.kernel()
+    }
+}
+
 /// The horizontal traversal used by error diffusion.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -484,19 +635,23 @@ pub enum DiffusionScan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorDiffusion {
     palette: Palette,
-    algorithm: DiffusionAlgorithm,
+    kernel: DiffusionKernel,
     scan: DiffusionScan,
     pixel_size: u32,
+    strength: u16,
+    error_clamp: Option<u8>,
 }
 
 impl ErrorDiffusion {
-    /// Creates error diffusion using the supplied palette and weight preset.
-    pub const fn new(palette: Palette, algorithm: DiffusionAlgorithm) -> Self {
+    /// Creates error diffusion using a built-in algorithm or custom kernel.
+    pub fn new(palette: Palette, kernel: impl Into<DiffusionKernel>) -> Self {
         Self {
             palette,
-            algorithm,
+            kernel: kernel.into(),
             scan: DiffusionScan::Raster,
             pixel_size: 1,
+            strength: DIFFUSION_STRENGTH_SCALE,
+            error_clamp: None,
         }
     }
 
@@ -505,9 +660,14 @@ impl ErrorDiffusion {
         &self.palette
     }
 
-    /// Returns the diffusion weight preset.
-    pub const fn algorithm(&self) -> DiffusionAlgorithm {
-        self.algorithm
+    /// Returns the diffusion kernel.
+    pub const fn kernel(&self) -> &DiffusionKernel {
+        &self.kernel
+    }
+
+    /// Returns the built-in diffusion preset, if one was supplied.
+    pub const fn algorithm(&self) -> Option<DiffusionAlgorithm> {
+        self.kernel.preset()
     }
 
     /// Sets the horizontal traversal mode.
@@ -536,6 +696,65 @@ impl ErrorDiffusion {
         self.pixel_size
     }
 
+    /// Sets the proportion of quantisation error distributed to later pixels.
+    ///
+    /// Strength is rounded to the nearest 1/256. A strength of zero disables
+    /// diffusion, one uses the kernel weights unchanged, and two doubles the
+    /// distributed error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] unless `strength` is finite and
+    /// between zero and two inclusive.
+    pub fn with_strength(mut self, strength: f32) -> Result<Self> {
+        if !strength.is_finite() || !(0.0..=2.0).contains(&strength) {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "diffusion strength must be between zero and two",
+            ));
+        }
+
+        self.strength = (strength * f32::from(DIFFUSION_STRENGTH_SCALE)).round() as u16;
+        Ok(self)
+    }
+
+    /// Returns the proportion of quantisation error distributed to later pixels.
+    pub fn strength(&self) -> f32 {
+        f32::from(self.strength) / f32::from(DIFFUSION_STRENGTH_SCALE)
+    }
+
+    /// Limits each channel's distributed error to `maximum` byte levels.
+    pub const fn with_error_clamp(mut self, maximum: u8) -> Self {
+        self.error_clamp = Some(maximum);
+        self
+    }
+
+    /// Removes a previously configured error limit.
+    pub const fn without_error_clamp(mut self) -> Self {
+        self.error_clamp = None;
+        self
+    }
+
+    /// Returns the per-channel error limit in byte levels, if configured.
+    pub const fn error_clamp(&self) -> Option<u8> {
+        self.error_clamp
+    }
+
+    fn parameters<'a>(
+        &'a self,
+        taps: &'a [DiffusionTap],
+        custom_divisor: u32,
+    ) -> DiffusionParameters<'a> {
+        DiffusionParameters {
+            palette: &self.palette,
+            taps,
+            pixel_size: self.pixel_size,
+            strength: self.strength,
+            error_clamp: self.error_clamp,
+            custom_divisor,
+        }
+    }
+
     fn apply_scan<const SERPENTINE: bool>(
         &self,
         input: &[u8],
@@ -543,78 +762,88 @@ impl ErrorDiffusion {
         dimensions: (u32, u32),
         mask: &Mask,
     ) {
-        match self.algorithm {
-            DiffusionAlgorithm::FloydSteinberg => diffuse_error::<16, SERPENTINE>(
+        if self.strength == DIFFUSION_STRENGTH_SCALE
+            && self.error_clamp.is_none()
+            && self.kernel.preset().is_some()
+        {
+            self.apply_kernel::<SERPENTINE, true>(input, output, dimensions, mask);
+        } else {
+            self.apply_kernel::<SERPENTINE, false>(input, output, dimensions, mask);
+        }
+    }
+
+    fn apply_kernel<const SERPENTINE: bool, const DEFAULT: bool>(
+        &self,
+        input: &[u8],
+        output: &mut [u8],
+        dimensions: (u32, u32),
+        mask: &Mask,
+    ) {
+        match self.kernel.preset() {
+            Some(DiffusionAlgorithm::FloydSteinberg) => diffuse_error::<16, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                FLOYD_STEINBERG,
-                self.pixel_size,
+                self.parameters(FLOYD_STEINBERG, 0),
             ),
-            DiffusionAlgorithm::Atkinson => diffuse_error::<8, SERPENTINE>(
+            Some(DiffusionAlgorithm::Atkinson) => diffuse_error::<8, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                ATKINSON,
-                self.pixel_size,
+                self.parameters(ATKINSON, 0),
             ),
-            DiffusionAlgorithm::JarvisJudiceNinke => diffuse_error::<48, SERPENTINE>(
+            Some(DiffusionAlgorithm::JarvisJudiceNinke) => {
+                diffuse_error::<48, SERPENTINE, DEFAULT>(
+                    input,
+                    output,
+                    dimensions,
+                    mask,
+                    self.parameters(JARVIS_JUDICE_NINKE, 0),
+                )
+            }
+            Some(DiffusionAlgorithm::Stucki) => diffuse_error::<42, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                JARVIS_JUDICE_NINKE,
-                self.pixel_size,
+                self.parameters(STUCKI, 0),
             ),
-            DiffusionAlgorithm::Stucki => diffuse_error::<42, SERPENTINE>(
+            Some(DiffusionAlgorithm::Burkes) => diffuse_error::<32, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                STUCKI,
-                self.pixel_size,
+                self.parameters(BURKES, 0),
             ),
-            DiffusionAlgorithm::Burkes => diffuse_error::<32, SERPENTINE>(
+            Some(DiffusionAlgorithm::Sierra) => diffuse_error::<32, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                BURKES,
-                self.pixel_size,
+                self.parameters(SIERRA, 0),
             ),
-            DiffusionAlgorithm::Sierra => diffuse_error::<32, SERPENTINE>(
+            Some(DiffusionAlgorithm::TwoRowSierra) => diffuse_error::<16, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                SIERRA,
-                self.pixel_size,
+                self.parameters(TWO_ROW_SIERRA, 0),
             ),
-            DiffusionAlgorithm::TwoRowSierra => diffuse_error::<16, SERPENTINE>(
+            Some(DiffusionAlgorithm::SierraLite) => diffuse_error::<4, SERPENTINE, DEFAULT>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                TWO_ROW_SIERRA,
-                self.pixel_size,
+                self.parameters(SIERRA_LITE, 0),
             ),
-            DiffusionAlgorithm::SierraLite => diffuse_error::<4, SERPENTINE>(
+            None => diffuse_error::<0, SERPENTINE, false>(
                 input,
                 output,
                 dimensions,
                 mask,
-                &self.palette,
-                SIERRA_LITE,
-                self.pixel_size,
+                self.parameters(self.kernel.taps(), self.kernel.divisor),
             ),
         }
     }
@@ -696,18 +925,38 @@ fn quantise_cells(
     }
 }
 
+struct DiffusionParameters<'a> {
+    palette: &'a Palette,
+    taps: &'a [DiffusionTap],
+    pixel_size: u32,
+    strength: u16,
+    error_clamp: Option<u8>,
+    custom_divisor: u32,
+}
+
 /// Quantises selected logical cells and distributes errors to later cells.
-fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool>(
+fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool>(
     input: &[u8],
     output: &mut [u8],
     dimensions: (u32, u32),
     mask: &Mask,
-    palette: &Palette,
-    neighbours: &[(i64, i64, i32)],
-    pixel_size: u32,
+    parameters: DiffusionParameters<'_>,
 ) {
+    let DiffusionParameters {
+        palette,
+        taps,
+        pixel_size,
+        strength,
+        error_clamp,
+        custom_divisor,
+    } = parameters;
     let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
         return;
+    };
+    let divisor = if DIVISOR == 0 {
+        i64::from(custom_divisor)
+    } else {
+        i64::from(DIVISOR)
     };
     let image_width = dimensions.0 as usize;
     let start_x = align_to_grid(min_x, pixel_size);
@@ -765,9 +1014,19 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool>(
                 adjusted[1] - i32::from(colour[1]) * FIXED_SCALE,
                 adjusted[2] - i32::from(colour[2]) * FIXED_SCALE,
             ];
+            let error = if DEFAULT {
+                error
+            } else if let Some(maximum) = error_clamp {
+                let maximum = i32::from(maximum) * FIXED_SCALE;
+                error.map(|channel| channel.clamp(-maximum, maximum))
+            } else {
+                error
+            };
 
-            for &(offset_x, offset_y, weight) in neighbours {
+            for tap in taps {
+                let offset_x = i64::from(tap.offset_x);
                 let offset_x = if reverse { -offset_x } else { offset_x };
+                let offset_y = i64::from(tap.offset_y);
                 let neighbour_x = cell_x as i64 + offset_x;
                 let neighbour_y = cell_y as i64 + offset_y;
                 if neighbour_x < 0
@@ -796,7 +1055,18 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool>(
                 }
 
                 for channel in 0..3 {
-                    working[neighbour_index][channel] += error[channel] * weight / DIVISOR;
+                    if DEFAULT {
+                        working[neighbour_index][channel] +=
+                            error[channel] * tap.weight as i32 / DIVISOR;
+                    } else {
+                        let contribution =
+                            i64::from(error[channel]) * i64::from(tap.weight) * i64::from(strength)
+                                / (divisor * i64::from(DIFFUSION_STRENGTH_SCALE));
+                        let contribution =
+                            contribution.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+                        working[neighbour_index][channel] =
+                            working[neighbour_index][channel].saturating_add(contribution as i32);
+                    }
                 }
             }
         }
@@ -952,8 +1222,8 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Color, Colour, DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, OrderedDither, Palette,
-        Threshold, bayer_value,
+        Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap,
+        ErrorDiffusion, OrderedDither, Palette, Threshold, bayer_value,
     };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -973,6 +1243,180 @@ mod tests {
 
     fn diffusion(algorithm: DiffusionAlgorithm) -> ErrorDiffusion {
         ErrorDiffusion::new(Palette::black_and_white(), algorithm)
+    }
+
+    #[test]
+    fn preserves_0_3_1_output_for_every_diffusion_preset() {
+        let pixels = (0..35)
+            .map(|index| {
+                let value = ((index * 47 + index * index * 3) % 256) as u8;
+                [value, value.wrapping_add(53), value.wrapping_mul(3), 200]
+            })
+            .collect::<Vec<_>>();
+        let source = source(7, 5, &pixels);
+        let algorithms = [
+            DiffusionAlgorithm::FloydSteinberg,
+            DiffusionAlgorithm::Atkinson,
+            DiffusionAlgorithm::JarvisJudiceNinke,
+            DiffusionAlgorithm::Stucki,
+            DiffusionAlgorithm::Burkes,
+            DiffusionAlgorithm::Sierra,
+            DiffusionAlgorithm::TwoRowSierra,
+            DiffusionAlgorithm::SierraLite,
+        ];
+        let expected = [
+            0xad91ccff1c25d794,
+            0xef9744fca489e2ad,
+            0x0b826bc567c18a14,
+            0x2a9383304415dc4d,
+            0xf901ea661db4d834,
+            0xef9744fca489e2ad,
+            0x5ebc740cdf5958b4,
+            0x8c4a4e3463ac974d,
+        ];
+
+        for (algorithm, expected) in algorithms.into_iter().zip(expected) {
+            let rendered = Renderer::new()
+                .render(&source, &diffusion(algorithm), &Selection::All)
+                .unwrap();
+            let hash = rendered
+                .rgba8_bytes()
+                .iter()
+                .fold(0xcbf29ce484222325_u64, |hash, byte| {
+                    (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+                });
+            assert_eq!(hash, expected, "changed output for {algorithm:?}");
+        }
+    }
+
+    #[test]
+    fn validates_and_exposes_custom_diffusion_kernels() {
+        let taps = [
+            DiffusionTap::new(1, 0, 7),
+            DiffusionTap::new(-1, 1, 3),
+            DiffusionTap::new(0, 1, 5),
+            DiffusionTap::new(1, 1, 1),
+        ];
+        let kernel = DiffusionKernel::new(taps, 16).unwrap();
+        assert_eq!(kernel.taps(), taps);
+        assert_eq!(kernel.divisor(), 16);
+        assert_eq!(kernel.preset(), None);
+        assert_eq!(kernel.taps()[0].offset_x(), 1);
+        assert_eq!(kernel.taps()[0].offset_y(), 0);
+        assert_eq!(kernel.taps()[0].weight(), 7);
+
+        let preset = DiffusionAlgorithm::FloydSteinberg.kernel();
+        assert_eq!(preset.taps(), taps);
+        assert_eq!(preset.divisor(), 16);
+        assert_eq!(preset.preset(), Some(DiffusionAlgorithm::FloydSteinberg));
+
+        let invalid = [
+            DiffusionKernel::new(Vec::<DiffusionTap>::new(), 1).unwrap_err(),
+            DiffusionKernel::new([DiffusionTap::new(1, 0, 1)], 0).unwrap_err(),
+            DiffusionKernel::new([DiffusionTap::new(1, 0, 0)], 1).unwrap_err(),
+            DiffusionKernel::new([DiffusionTap::new(0, 0, 1)], 1).unwrap_err(),
+            DiffusionKernel::new([DiffusionTap::new(-1, 0, 1)], 1).unwrap_err(),
+            DiffusionKernel::new([DiffusionTap::new(0, -1, 1)], 1).unwrap_err(),
+        ];
+        assert!(
+            invalid
+                .iter()
+                .all(|error| error.kind() == ErrorKind::InvalidParameter)
+        );
+    }
+
+    #[test]
+    fn custom_kernel_matches_its_builtin_equivalent() {
+        let source = source(
+            6,
+            2,
+            &[
+                [20, 40, 60, 1],
+                [70, 90, 110, 2],
+                [120, 140, 160, 3],
+                [170, 190, 210, 4],
+                [220, 240, 250, 5],
+                [100, 130, 160, 6],
+                [210, 180, 150, 7],
+                [160, 130, 100, 8],
+                [110, 80, 50, 9],
+                [60, 30, 10, 10],
+                [130, 170, 210, 11],
+                [230, 190, 150, 12],
+            ],
+        );
+        let custom = DiffusionKernel::new(
+            [
+                DiffusionTap::new(1, 0, 7),
+                DiffusionTap::new(-1, 1, 3),
+                DiffusionTap::new(0, 1, 5),
+                DiffusionTap::new(1, 1, 1),
+            ],
+            16,
+        )
+        .unwrap();
+        for scan in [DiffusionScan::Raster, DiffusionScan::Serpentine] {
+            let builtin = Renderer::new()
+                .render(
+                    &source,
+                    &diffusion(DiffusionAlgorithm::FloydSteinberg).with_scan(scan),
+                    &Selection::All,
+                )
+                .unwrap();
+            let rendered = Renderer::new()
+                .render(
+                    &source,
+                    &ErrorDiffusion::new(Palette::black_and_white(), custom.clone())
+                        .with_scan(scan),
+                    &Selection::All,
+                )
+                .unwrap();
+
+            assert_eq!(rendered.rgba8_bytes(), builtin.rgba8_bytes());
+        }
+    }
+
+    #[test]
+    fn configures_diffusion_strength_and_error_clamping() {
+        let source = source(4, 1, &[[100, 100, 100, 70]; 4]);
+        let threshold = Renderer::new()
+            .render(
+                &source,
+                &Threshold::new(Palette::black_and_white()),
+                &Selection::All,
+            )
+            .unwrap();
+        let no_diffusion = diffusion(DiffusionAlgorithm::FloydSteinberg)
+            .with_strength(0.0)
+            .unwrap();
+        let no_error = diffusion(DiffusionAlgorithm::FloydSteinberg).with_error_clamp(0);
+
+        for effect in [&no_diffusion, &no_error] {
+            let rendered = Renderer::new()
+                .render(&source, effect, &Selection::All)
+                .unwrap();
+            assert_eq!(rendered.rgba8_bytes(), threshold.rgba8_bytes());
+        }
+
+        let configured = diffusion(DiffusionAlgorithm::Stucki)
+            .with_strength(1.5)
+            .unwrap()
+            .with_error_clamp(32);
+        assert_eq!(configured.strength(), 1.5);
+        assert_eq!(configured.error_clamp(), Some(32));
+        assert_eq!(configured.clone().without_error_clamp().error_clamp(), None);
+        assert_eq!(diffusion(DiffusionAlgorithm::Stucki).strength(), 1.0);
+        assert_eq!(diffusion(DiffusionAlgorithm::Stucki).error_clamp(), None);
+
+        for strength in [-0.1, 2.1, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                diffusion(DiffusionAlgorithm::Stucki)
+                    .with_strength(strength)
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidParameter
+            );
+        }
     }
 
     #[test]
@@ -1543,7 +1987,7 @@ mod tests {
                 .render(&source, &effect, &Selection::All)
                 .unwrap();
 
-            assert_eq!(effect.algorithm(), algorithm);
+            assert_eq!(effect.algorithm(), Some(algorithm));
             assert_eq!(effect.scan(), DiffusionScan::Serpentine);
             assert_eq!(effect.pixel_size(), 2);
             assert_eq!(effect.palette(), &Palette::black_and_white());
