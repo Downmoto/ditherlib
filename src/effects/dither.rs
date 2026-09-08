@@ -1,28 +1,15 @@
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
 
 const FIXED_SCALE: i32 = 256;
-const FLOYD_STEINBERG: DiffusionKernel = DiffusionKernel {
-    neighbours: &[(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)],
-    divisor: 16,
-};
-const ATKINSON: DiffusionKernel = DiffusionKernel {
-    neighbours: &[
-        (1, 0, 1),
-        (2, 0, 1),
-        (-1, 1, 1),
-        (0, 1, 1),
-        (1, 1, 1),
-        (0, 2, 1),
-    ],
-    divisor: 8,
-};
-
-/// Error destinations and their shared weight divisor.
-#[derive(Clone, Copy)]
-struct DiffusionKernel {
-    neighbours: &'static [(i64, i64, i32)],
-    divisor: i32,
-}
+const FLOYD_STEINBERG: &[(i64, i64, i32)] = &[(1, 0, 7), (-1, 1, 3), (0, 1, 5), (1, 1, 1)];
+const ATKINSON: &[(i64, i64, i32)] = &[
+    (1, 0, 1),
+    (2, 0, 1),
+    (-1, 1, 1),
+    (0, 1, 1),
+    (1, 1, 1),
+    (0, 2, 1),
+];
 
 /// A non-empty collection of RGB colours available to a dithering effect.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,7 +66,13 @@ impl Palette {
     ///
     /// Matching uses squared Euclidean distance in RGB byte space. When two
     /// entries are equally close, the earlier palette entry wins.
+    #[inline]
     pub fn nearest_colour(&self, colour: [u8; 3]) -> [u8; 3] {
+        if self.colours.as_ref() == [[0, 0, 0], [255, 255, 255]] {
+            // The squared distances cross at an RGB sum of 382.5.
+            let sum = u16::from(colour[0]) + u16::from(colour[1]) + u16::from(colour[2]);
+            return [if sum >= 383 { 255 } else { 0 }; 3];
+        }
         *self
             .colours
             .iter()
@@ -212,6 +205,16 @@ impl Effect for OrderedDither {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
+        let size = u32::from(self.matrix_size);
+        let levels = (size * size) as i32;
+        let mut adjustments = [0; 64];
+        for y in 0..size {
+            for x in 0..size {
+                let threshold = i32::from(bayer_value(x, y, self.matrix_size));
+                adjustments[(y * size + x) as usize] =
+                    (2 * threshold + 1 - levels) * 255 / (2 * levels);
+            }
+        }
         quantise_cells(
             input,
             output,
@@ -219,11 +222,9 @@ impl Effect for OrderedDither {
             mask,
             self.pixel_size,
             |colour, x, y| {
-                let colour = adjust_colour(
-                    colour,
-                    bayer_value(x, y, self.matrix_size),
-                    self.matrix_size,
-                );
+                let adjustment = adjustments[((y % size) * size + x % size) as usize];
+                let colour =
+                    colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
                 self.palette.nearest_colour(colour)
             },
         );
@@ -279,7 +280,7 @@ impl Effect for FloydSteinberg {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        diffuse_error(
+        diffuse_error::<16>(
             input,
             output,
             dimensions,
@@ -341,7 +342,7 @@ impl Effect for Atkinson {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        diffuse_error(
+        diffuse_error::<8>(
             input,
             output,
             dimensions,
@@ -415,13 +416,13 @@ fn quantise_cells(
 }
 
 /// Quantises selected logical cells and distributes errors to later cells.
-fn diffuse_error(
+fn diffuse_error<const DIVISOR: i32>(
     input: &[u8],
     output: &mut [u8],
     dimensions: (u32, u32),
     mask: &Mask,
     palette: &Palette,
-    kernel: DiffusionKernel,
+    neighbours: &[(i64, i64, i32)],
     pixel_size: u32,
 ) {
     let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
@@ -478,7 +479,7 @@ fn diffuse_error(
                 adjusted[2] - i32::from(colour[2]) * FIXED_SCALE,
             ];
 
-            for &(offset_x, offset_y, weight) in kernel.neighbours {
+            for &(offset_x, offset_y, weight) in neighbours {
                 let neighbour_x = cell_x as i64 + offset_x;
                 let neighbour_y = cell_y as i64 + offset_y;
                 if neighbour_x < 0
@@ -507,7 +508,7 @@ fn diffuse_error(
                 }
 
                 for channel in 0..3 {
-                    working[neighbour_index][channel] += error[channel] * weight / kernel.divisor;
+                    working[neighbour_index][channel] += error[channel] * weight / DIVISOR;
                 }
             }
         }
@@ -629,14 +630,6 @@ fn validate_pixel_size(pixel_size: u32) -> Result<u32> {
     Ok(pixel_size)
 }
 
-/// Adjusts RGB channels around the Bayer threshold before palette matching.
-fn adjust_colour(colour: [u8; 3], threshold: u8, matrix_size: u8) -> [u8; 3] {
-    let levels = i32::from(matrix_size).pow(2);
-    let adjustment = (2 * i32::from(threshold) + 1 - levels) * 255 / (2 * levels);
-
-    colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8)
-}
-
 /// Returns a standard recursive Bayer threshold anchored at `(0, 0)`.
 fn bayer_value(x: u32, y: u32, size: u8) -> u8 {
     if size == 1 {
@@ -697,6 +690,10 @@ mod tests {
         assert_eq!(palette.nearest_colour([200, 10, 40]), [255, 0, 0]);
         assert_eq!(palette.nearest_colour([40, 10, 200]), [0, 0, 255]);
         assert_eq!(palette.nearest_colour([127, 0, 127]), [255, 0, 0]);
+
+        let black_and_white = Palette::black_and_white();
+        assert_eq!(black_and_white.nearest_colour([255, 127, 0]), [0; 3]);
+        assert_eq!(black_and_white.nearest_colour([0, 128, 255]), [255; 3]);
 
         assert_eq!(
             Palette::monochrome([1, 2, 3]).colours(),

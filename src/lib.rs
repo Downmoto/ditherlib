@@ -186,17 +186,17 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/valid.jpg");
         let image = read(path).expect("valid.jpg should be a valid JPEG image");
 
-        assert_eq!(image.width(), 3000);
-        assert_eq!(image.height(), 4496);
-        assert_eq!(image.dimensions(), (3000, 4496));
+        assert_eq!(image.width(), 2000);
+        assert_eq!(image.height(), 3000);
+        assert_eq!(image.dimensions(), (2000, 3000));
 
         let pixels: &[u8] = image.rgba8_bytes();
-        assert_eq!(pixels.len(), 3000 * 4496 * 4);
-        assert_eq!(image.pixel(0, 0), Some([164, 59, 4, 255]));
-        assert_eq!(image.pixel(1500, 2248), Some([148, 164, 226, 255]));
-        assert_eq!(image.pixel(2999, 4495), Some([255, 254, 215, 255]));
-        assert_eq!(image.pixel(3000, 0), None);
-        assert_eq!(image.pixel(0, 4496), None);
+        assert_eq!(pixels.len(), 2000 * 3000 * 4);
+        assert_eq!(image.pixel(0, 0), Some([192, 168, 164, 255]));
+        assert_eq!(image.pixel(1000, 1500), Some([129, 128, 124, 255]));
+        assert_eq!(image.pixel(1999, 2999), Some([40, 40, 28, 255]));
+        assert_eq!(image.pixel(2000, 0), None);
+        assert_eq!(image.pixel(0, 3000), None);
     }
 
     #[test]
