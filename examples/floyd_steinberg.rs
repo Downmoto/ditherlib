@@ -1,6 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{FloydSteinberg, Palette, Renderer, Selection, read, write};
+use ditherlib::{DiffusionAlgorithm, ErrorDiffusion, Palette, Renderer, Selection, read, write};
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
@@ -21,7 +21,11 @@ fn main() -> ExitCode {
 
 fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     let source = read(input)?;
-    let effect = FloydSteinberg::new(Palette::black_and_white()).with_pixel_size(4)?;
+    let effect = ErrorDiffusion::new(
+        Palette::black_and_white(),
+        DiffusionAlgorithm::FloydSteinberg,
+    )
+    .with_pixel_size(4)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write(output, &rendered)
 }
