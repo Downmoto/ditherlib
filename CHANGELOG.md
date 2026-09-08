@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.3.0 - 2026-09-08
+## 0.3.1
+
+### Added
+
+- Added the `Colour` RGB type, its `Color` spelling alias, common colour
+  constants, array conversions, palette iteration, and structured nearest
+  colour matching.
+- Added eight-level greyscale, Game Boy, CGA, and PICO-8 palette presets.
+- Allowed custom and monochrome palettes to be created from `Colour` values or
+  RGB byte arrays.
+- Added a four-quadrant example comparing every prefab palette under the same
+  diffusion settings.
+
+## 0.3.0
 
 ### Added
 
@@ -16,7 +29,7 @@
 - Replaced the standalone `FloydSteinberg` and `Atkinson` effects with their
   `DiffusionAlgorithm` presets on `ErrorDiffusion`.
 
-## 0.2.0 - 2026-09-08
+## 0.2.0
 
 ### Performance
 

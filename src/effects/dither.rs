@@ -70,6 +70,73 @@ const TWO_ROW_SIERRA: &[(i64, i64, i32)] = &[
 ];
 const SIERRA_LITE: &[(i64, i64, i32)] = &[(1, 0, 2), (-1, 1, 1), (0, 1, 1)];
 
+/// An RGB colour with 8-bit channels.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Colour {
+    /// Red channel.
+    pub red: u8,
+    /// Green channel.
+    pub green: u8,
+    /// Blue channel.
+    pub blue: u8,
+}
+
+impl Colour {
+    /// Black.
+    pub const BLACK: Self = Self::new(0, 0, 0);
+    /// White.
+    pub const WHITE: Self = Self::new(255, 255, 255);
+    /// Red.
+    pub const RED: Self = Self::new(255, 0, 0);
+    /// Green.
+    pub const GREEN: Self = Self::new(0, 255, 0);
+    /// Blue.
+    pub const BLUE: Self = Self::new(0, 0, 255);
+    /// Cyan.
+    pub const CYAN: Self = Self::new(0, 255, 255);
+    /// Magenta.
+    pub const MAGENTA: Self = Self::new(255, 0, 255);
+    /// Yellow.
+    pub const YELLOW: Self = Self::new(255, 255, 0);
+
+    /// Creates an RGB colour.
+    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
+
+    /// Returns the colour as an RGB byte array.
+    pub const fn rgb(self) -> [u8; 3] {
+        [self.red, self.green, self.blue]
+    }
+}
+
+impl From<[u8; 3]> for Colour {
+    fn from([red, green, blue]: [u8; 3]) -> Self {
+        Self::new(red, green, blue)
+    }
+}
+
+impl From<&[u8; 3]> for Colour {
+    fn from(colour: &[u8; 3]) -> Self {
+        Self::from(*colour)
+    }
+}
+
+impl From<&Colour> for Colour {
+    fn from(colour: &Colour) -> Self {
+        *colour
+    }
+}
+
+impl From<Colour> for [u8; 3] {
+    fn from(colour: Colour) -> Self {
+        colour.rgb()
+    }
+}
+
+/// American English alias for [`Colour`].
+pub type Color = Colour;
+
 /// A non-empty collection of RGB colours available to a dithering effect.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Palette {
@@ -82,8 +149,15 @@ impl Palette {
     /// # Errors
     ///
     /// Returns [`ErrorKind::InvalidParameter`] when `colours` is empty.
-    pub fn new(colours: impl Into<Box<[[u8; 3]]>>) -> Result<Self> {
-        let colours = colours.into();
+    pub fn new<C>(colours: impl IntoIterator<Item = C>) -> Result<Self>
+    where
+        C: Into<Colour>,
+    {
+        let colours = colours
+            .into_iter()
+            .map(|colour| colour.into().rgb())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
         if colours.is_empty() {
             return Err(DitherError::new(
@@ -99,7 +173,8 @@ impl Palette {
     ///
     /// Supplying black or white produces the same two entries as
     /// [`Palette::black_and_white`].
-    pub fn monochrome(colour: [u8; 3]) -> Self {
+    pub fn monochrome(colour: impl Into<Colour>) -> Self {
+        let colour = colour.into().rgb();
         if colour == [0, 0, 0] || colour == [255, 255, 255] {
             return Self::black_and_white();
         }
@@ -116,9 +191,90 @@ impl Palette {
         }
     }
 
+    /// Creates an eight-level greyscale palette.
+    pub fn greyscale() -> Self {
+        Self {
+            colours: Box::new([
+                [0, 0, 0],
+                [36, 36, 36],
+                [73, 73, 73],
+                [109, 109, 109],
+                [146, 146, 146],
+                [182, 182, 182],
+                [219, 219, 219],
+                [255, 255, 255],
+            ]),
+        }
+    }
+
+    /// Creates a four-colour green palette inspired by the original Game Boy.
+    pub fn game_boy() -> Self {
+        Self {
+            colours: Box::new([[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]]),
+        }
+    }
+
+    /// Creates the standard 16-colour CGA palette.
+    pub fn cga() -> Self {
+        Self {
+            colours: Box::new([
+                [0, 0, 0],
+                [0, 0, 170],
+                [0, 170, 0],
+                [0, 170, 170],
+                [170, 0, 0],
+                [170, 0, 170],
+                [170, 85, 0],
+                [170, 170, 170],
+                [85, 85, 85],
+                [85, 85, 255],
+                [85, 255, 85],
+                [85, 255, 255],
+                [255, 85, 85],
+                [255, 85, 255],
+                [255, 255, 85],
+                [255, 255, 255],
+            ]),
+        }
+    }
+
+    /// Creates the standard 16-colour PICO-8 palette.
+    pub fn pico_8() -> Self {
+        Self {
+            colours: Box::new([
+                [0, 0, 0],
+                [29, 43, 83],
+                [126, 37, 83],
+                [0, 135, 81],
+                [171, 82, 54],
+                [95, 87, 79],
+                [194, 195, 199],
+                [255, 241, 232],
+                [255, 0, 77],
+                [255, 163, 0],
+                [255, 236, 39],
+                [0, 228, 54],
+                [41, 173, 255],
+                [131, 118, 156],
+                [255, 119, 168],
+                [255, 204, 170],
+            ]),
+        }
+    }
+
     /// Returns the palette's RGB colours in matching order.
     pub fn colours(&self) -> &[[u8; 3]] {
         &self.colours
+    }
+
+    /// Iterates over the palette as [`Colour`] values.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Colour> + '_ {
+        self.colours.iter().copied().map(Colour::from)
+    }
+
+    /// Returns the nearest palette entry as a [`Colour`].
+    pub fn nearest(&self, colour: impl Into<Colour>) -> Colour {
+        Colour::from(self.nearest_colour(colour.into().rgb()))
     }
 
     /// Returns the nearest palette colour to `colour`.
@@ -796,8 +952,8 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, OrderedDither, Palette, Threshold,
-        bayer_value,
+        Color, Colour, DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, OrderedDither, Palette,
+        Threshold, bayer_value,
     };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -850,6 +1006,45 @@ mod tests {
             Palette::black_and_white().colours(),
             &[[0, 0, 0], [255, 255, 255]]
         );
+    }
+
+    #[test]
+    fn provides_colour_values_and_prefab_palettes() {
+        let colour = Colour::new(12, 34, 56);
+        let alias: Color = colour;
+        assert_eq!(alias.rgb(), [12, 34, 56]);
+        assert_eq!(Colour::from([12, 34, 56]), colour);
+        assert_eq!(<[u8; 3]>::from(colour), [12, 34, 56]);
+
+        let custom = Palette::new([Colour::BLACK, colour, Colour::WHITE]).unwrap();
+        assert_eq!(
+            custom.colours(),
+            &[[0, 0, 0], [12, 34, 56], [255, 255, 255]]
+        );
+        assert_eq!(
+            custom.iter().collect::<Vec<_>>(),
+            [Colour::BLACK, colour, Colour::WHITE]
+        );
+        assert_eq!(custom.nearest(Colour::new(10, 30, 50)), colour);
+
+        assert_eq!(
+            Palette::greyscale().colours(),
+            &[
+                [0, 0, 0],
+                [36, 36, 36],
+                [73, 73, 73],
+                [109, 109, 109],
+                [146, 146, 146],
+                [182, 182, 182],
+                [219, 219, 219],
+                [255, 255, 255],
+            ]
+        );
+        assert_eq!(Palette::game_boy().colours().len(), 4);
+        assert_eq!(Palette::cga().colours().len(), 16);
+        assert_eq!(Palette::pico_8().colours().len(), 16);
+        assert_eq!(Palette::cga().colours()[6], [170, 85, 0]);
+        assert_eq!(Palette::pico_8().colours()[8], [255, 0, 77]);
     }
 
     #[test]
