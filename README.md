@@ -14,7 +14,7 @@ re-render pipelines.
 - Threshold and ordered Bayer dithering
 - Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, Stucki, Burkes, Sierra,
   Two-Row Sierra, and Sierra Lite error diffusion
-- Raster and serpentine error-diffusion scanning
+- Custom diffusion kernels, strength, clamping, and scan direction
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Configurable logical pixel sizes for every dithering method
 - Whole-image and polygon selections with anti-aliased edges
@@ -27,14 +27,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.3"
+ditherlib = "0.4"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.3", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.4", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -94,34 +94,60 @@ American spelling. `Palette::new` accepts either representation:
 ```rust
 use ditherlib::{Colour, Palette};
 
-let palette = Palette::new([
-    Colour::BLACK,
-    Colour::new(220, 20, 60),
-    Colour::WHITE,
-])?;
-# Ok::<(), ditherlib::DitherError>(())
+fn main() -> ditherlib::Result<()> {
+    let palette = Palette::new([
+        Colour::BLACK,
+        Colour::new(220, 20, 60),
+        Colour::WHITE,
+    ])?;
+    assert_eq!(palette.colours().len(), 3);
+    Ok(())
+}
 ```
 
 ## Error diffusion
 
-`ErrorDiffusion` provides all diffusion presets and supports raster or
-serpentine scanning.
+`ErrorDiffusion` accepts a built-in algorithm or a validated custom kernel. It
+supports raster or serpentine scanning, diffusion strength from `0.0` through
+`2.0`, and optional per-channel error clamping.
 
 ```rust,no_run
 use ditherlib::{
     DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, Palette, Renderer,
-    Selection, read,
+    Selection, read, write,
 };
 
-# fn run() -> ditherlib::Result<()> {
-let source = read("input.png")?;
-let effect = ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
-    .with_scan(DiffusionScan::Serpentine)
-    .with_pixel_size(2)?;
-let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
-# let _ = rendered;
-# Ok(())
-# }
+fn main() -> ditherlib::Result<()> {
+    let source = read("input.png")?;
+    let effect = ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
+        .with_scan(DiffusionScan::Serpentine)
+        .with_pixel_size(2)?;
+    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
+    write("output.png", &rendered)
+}
+```
+
+Custom kernels contain forward-pointing weighted taps and a divisor:
+
+```rust
+use ditherlib::{DiffusionKernel, DiffusionTap, ErrorDiffusion, Palette};
+
+fn main() -> ditherlib::Result<()> {
+    let kernel = DiffusionKernel::new(
+        [
+            DiffusionTap::new(1, 0, 7),
+            DiffusionTap::new(-1, 1, 3),
+            DiffusionTap::new(0, 1, 5),
+            DiffusionTap::new(1, 1, 1),
+        ],
+        16,
+    )?;
+    let effect = ErrorDiffusion::new(Palette::black_and_white(), kernel)
+        .with_strength(0.75)?
+        .with_error_clamp(48);
+    assert_eq!(effect.strength(), 0.75);
+    Ok(())
+}
 ```
 
 ## Errors
@@ -142,6 +168,7 @@ Every example accepts an input path and output path:
 cargo run --release --example pipeline -- input.jpg output.png
 cargo run --release --example polygon_pipeline -- input.jpg output.png
 cargo run --release --example diffusion_comparison -- input.jpg first.png second.png
+cargo run --release --example diffusion_controls -- input.jpg strengths.png clamps.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 ```
 
@@ -149,6 +176,10 @@ The diffusion comparison requires an image with even dimensions. `first.png`
 uses Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, and Stucki from top-left
 to bottom-right. `second.png` uses Burkes, Sierra, Two-Row Sierra, and Sierra
 Lite in the same order.
+
+The diffusion controls example creates two quadrant comparisons. `strengths.png`
+uses strengths 0.0, 0.5, 1.0, and 1.5 from top-left to bottom-right.
+`clamps.png` uses error limits of 0, 24, 64, and unlimited in the same order.
 
 The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
 to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning

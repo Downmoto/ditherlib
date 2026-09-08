@@ -10,8 +10,8 @@ mod renderer;
 mod selection;
 
 pub use effects::{
-    Blur, Color, Colour, DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, Greyscale,
-    OrderedDither, Palette, Threshold,
+    Blur, Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap,
+    ErrorDiffusion, Greyscale, OrderedDither, Palette, Threshold,
 };
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};

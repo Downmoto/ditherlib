@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- Added validated custom error-diffusion kernels with public taps, weights,
+  offsets, and divisors.
+- Added configurable diffusion strength from zero through double strength.
+- Added optional per-channel error clamping.
+- Added a two-image comparison example for diffusion strength and clamping.
+
+### Changed
+
+- `ErrorDiffusion::new` now accepts either a `DiffusionAlgorithm` preset or a
+  custom `DiffusionKernel` and is no longer a `const` function.
+- `ErrorDiffusion::algorithm` now returns `Option<DiffusionAlgorithm>` because
+  custom kernels do not have a built-in preset name.
+- Preset defaults retain their 0.3.1 rendered output and optimised path.
+
 ## 0.3.1
 
 ### Added
