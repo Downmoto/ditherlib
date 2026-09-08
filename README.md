@@ -83,7 +83,24 @@ always begins from the unchanged `SourceImage`.
 
 `Palette::black_and_white()` provides the familiar two-colour palette.
 `Palette::monochrome(colour)` combines black, the supplied RGB colour, and
-white. `Palette::new` accepts any non-empty collection of RGB colours.
+white. Eight-level greyscale, Game Boy, CGA, and PICO-8 palettes are also
+available through `Palette::greyscale()`, `Palette::game_boy()`,
+`Palette::cga()`, and `Palette::pico_8()`.
+
+`Colour` represents an RGB value with named channels, common colour constants,
+and conversions to and from `[u8; 3]`. `Color` is an alias for callers using
+American spelling. `Palette::new` accepts either representation:
+
+```rust
+use ditherlib::{Colour, Palette};
+
+let palette = Palette::new([
+    Colour::BLACK,
+    Colour::new(220, 20, 60),
+    Colour::WHITE,
+])?;
+# Ok::<(), ditherlib::DitherError>(())
+```
 
 ## Error diffusion
 
@@ -125,12 +142,17 @@ Every example accepts an input path and output path:
 cargo run --release --example pipeline -- input.jpg output.png
 cargo run --release --example polygon_pipeline -- input.jpg output.png
 cargo run --release --example diffusion_comparison -- input.jpg first.png second.png
+cargo run --release --example palette_comparison -- input.jpg palettes.png
 ```
 
 The diffusion comparison requires an image with even dimensions. `first.png`
 uses Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, and Stucki from top-left
 to bottom-right. `second.png` uses Burkes, Sierra, Two-Row Sierra, and Sierra
 Lite in the same order.
+
+The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
+to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning
+to every quadrant so the palette is the only variable.
 
 Additional examples cover each built-in effect in the [`examples`](./examples/)
 directory.
