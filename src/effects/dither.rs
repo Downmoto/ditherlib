@@ -10,6 +10,65 @@ const ATKINSON: &[(i64, i64, i32)] = &[
     (1, 1, 1),
     (0, 2, 1),
 ];
+const JARVIS_JUDICE_NINKE: &[(i64, i64, i32)] = &[
+    (1, 0, 7),
+    (2, 0, 5),
+    (-2, 1, 3),
+    (-1, 1, 5),
+    (0, 1, 7),
+    (1, 1, 5),
+    (2, 1, 3),
+    (-2, 2, 1),
+    (-1, 2, 3),
+    (0, 2, 5),
+    (1, 2, 3),
+    (2, 2, 1),
+];
+const STUCKI: &[(i64, i64, i32)] = &[
+    (1, 0, 8),
+    (2, 0, 4),
+    (-2, 1, 2),
+    (-1, 1, 4),
+    (0, 1, 8),
+    (1, 1, 4),
+    (2, 1, 2),
+    (-2, 2, 1),
+    (-1, 2, 2),
+    (0, 2, 4),
+    (1, 2, 2),
+    (2, 2, 1),
+];
+const BURKES: &[(i64, i64, i32)] = &[
+    (1, 0, 8),
+    (2, 0, 4),
+    (-2, 1, 2),
+    (-1, 1, 4),
+    (0, 1, 8),
+    (1, 1, 4),
+    (2, 1, 2),
+];
+const SIERRA: &[(i64, i64, i32)] = &[
+    (1, 0, 5),
+    (2, 0, 3),
+    (-2, 1, 2),
+    (-1, 1, 4),
+    (0, 1, 5),
+    (1, 1, 4),
+    (2, 1, 2),
+    (-1, 2, 2),
+    (0, 2, 3),
+    (1, 2, 2),
+];
+const TWO_ROW_SIERRA: &[(i64, i64, i32)] = &[
+    (1, 0, 4),
+    (2, 0, 3),
+    (-2, 1, 1),
+    (-1, 1, 2),
+    (0, 1, 3),
+    (1, 1, 2),
+    (2, 1, 1),
+];
+const SIERRA_LITE: &[(i64, i64, i32)] = &[(1, 0, 2), (-1, 1, 1), (0, 1, 1)];
 
 /// A non-empty collection of RGB colours available to a dithering effect.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -232,21 +291,55 @@ impl Effect for OrderedDither {
     }
 }
 
-/// Applies Floyd-Steinberg error-diffusion dithering.
-///
-/// Pixels are processed top to bottom and left to right. Quantisation error is
-/// distributed only to later pixels with non-zero mask coverage.
+/// An error-diffusion weight preset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DiffusionAlgorithm {
+    /// Floyd-Steinberg's compact two-row kernel.
+    FloydSteinberg,
+    /// Atkinson's light, high-contrast diffusion.
+    Atkinson,
+    /// Jarvis, Judice, and Ninke's broad three-row kernel.
+    JarvisJudiceNinke,
+    /// Stucki's broad three-row kernel.
+    Stucki,
+    /// Burkes' two-row simplification of Stucki diffusion.
+    Burkes,
+    /// Sierra's three-row kernel.
+    Sierra,
+    /// Sierra's smaller two-row kernel.
+    TwoRowSierra,
+    /// Sierra Lite's fast three-neighbour kernel.
+    SierraLite,
+}
+
+/// The horizontal traversal used by error diffusion.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DiffusionScan {
+    /// Processes every row from left to right.
+    #[default]
+    Raster,
+    /// Alternates direction on each logical row to reduce directional artefacts.
+    Serpentine,
+}
+
+/// Applies a configurable error-diffusion algorithm.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FloydSteinberg {
+pub struct ErrorDiffusion {
     palette: Palette,
+    algorithm: DiffusionAlgorithm,
+    scan: DiffusionScan,
     pixel_size: u32,
 }
 
-impl FloydSteinberg {
-    /// Creates Floyd-Steinberg dithering with the supplied palette.
-    pub const fn new(palette: Palette) -> Self {
+impl ErrorDiffusion {
+    /// Creates error diffusion using the supplied palette and weight preset.
+    pub const fn new(palette: Palette, algorithm: DiffusionAlgorithm) -> Self {
         Self {
             palette,
+            algorithm,
+            scan: DiffusionScan::Raster,
             pixel_size: 1,
         }
     }
@@ -254,6 +347,22 @@ impl FloydSteinberg {
     /// Returns the target palette.
     pub const fn palette(&self) -> &Palette {
         &self.palette
+    }
+
+    /// Returns the diffusion weight preset.
+    pub const fn algorithm(&self) -> DiffusionAlgorithm {
+        self.algorithm
+    }
+
+    /// Sets the horizontal traversal mode.
+    pub const fn with_scan(mut self, scan: DiffusionScan) -> Self {
+        self.scan = scan;
+        self
+    }
+
+    /// Returns the horizontal traversal mode.
+    pub const fn scan(&self) -> DiffusionScan {
+        self.scan
     }
 
     /// Sets the width and height of each square logical pixel.
@@ -270,71 +379,92 @@ impl FloydSteinberg {
     pub const fn pixel_size(&self) -> u32 {
         self.pixel_size
     }
-}
 
-impl Effect for FloydSteinberg {
-    fn apply(
+    fn apply_scan<const SERPENTINE: bool>(
         &self,
         input: &[u8],
         output: &mut [u8],
         dimensions: (u32, u32),
         mask: &Mask,
-    ) -> Result<()> {
-        diffuse_error::<16>(
-            input,
-            output,
-            dimensions,
-            mask,
-            &self.palette,
-            FLOYD_STEINBERG,
-            self.pixel_size,
-        );
-        Ok(())
-    }
-}
-
-/// Applies Atkinson error-diffusion dithering.
-///
-/// Pixels are processed top to bottom and left to right. Quantisation error is
-/// distributed only to later pixels with non-zero mask coverage, and two-pixel
-/// taps cannot jump across an unselected pixel.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Atkinson {
-    palette: Palette,
-    pixel_size: u32,
-}
-
-impl Atkinson {
-    /// Creates Atkinson dithering with the supplied palette.
-    pub const fn new(palette: Palette) -> Self {
-        Self {
-            palette,
-            pixel_size: 1,
+    ) {
+        match self.algorithm {
+            DiffusionAlgorithm::FloydSteinberg => diffuse_error::<16, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                FLOYD_STEINBERG,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::Atkinson => diffuse_error::<8, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                ATKINSON,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::JarvisJudiceNinke => diffuse_error::<48, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                JARVIS_JUDICE_NINKE,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::Stucki => diffuse_error::<42, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                STUCKI,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::Burkes => diffuse_error::<32, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                BURKES,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::Sierra => diffuse_error::<32, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                SIERRA,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::TwoRowSierra => diffuse_error::<16, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                TWO_ROW_SIERRA,
+                self.pixel_size,
+            ),
+            DiffusionAlgorithm::SierraLite => diffuse_error::<4, SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                &self.palette,
+                SIERRA_LITE,
+                self.pixel_size,
+            ),
         }
     }
-
-    /// Returns the target palette.
-    pub const fn palette(&self) -> &Palette {
-        &self.palette
-    }
-
-    /// Sets the width and height of each square logical pixel.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
-    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
-        self.pixel_size = validate_pixel_size(pixel_size)?;
-        Ok(self)
-    }
-
-    /// Returns the width and height of each square logical pixel.
-    pub const fn pixel_size(&self) -> u32 {
-        self.pixel_size
-    }
 }
 
-impl Effect for Atkinson {
+impl Effect for ErrorDiffusion {
     fn apply(
         &self,
         input: &[u8],
@@ -342,15 +472,10 @@ impl Effect for Atkinson {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        diffuse_error::<8>(
-            input,
-            output,
-            dimensions,
-            mask,
-            &self.palette,
-            ATKINSON,
-            self.pixel_size,
-        );
+        match self.scan {
+            DiffusionScan::Raster => self.apply_scan::<false>(input, output, dimensions, mask),
+            DiffusionScan::Serpentine => self.apply_scan::<true>(input, output, dimensions, mask),
+        }
         Ok(())
     }
 }
@@ -416,7 +541,7 @@ fn quantise_cells(
 }
 
 /// Quantises selected logical cells and distributes errors to later cells.
-fn diffuse_error<const DIVISOR: i32>(
+fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool>(
     input: &[u8],
     output: &mut [u8],
     dimensions: (u32, u32),
@@ -452,7 +577,13 @@ fn diffuse_error<const DIVISOR: i32>(
     }
 
     for cell_y in 0..working_height {
-        for cell_x in 0..working_width {
+        let reverse = SERPENTINE && (start_y / pixel_size + cell_y as u32) % 2 == 1;
+        for column in 0..working_width {
+            let cell_x = if reverse {
+                working_width - column - 1
+            } else {
+                column
+            };
             let working_index = cell_y * working_width + cell_x;
             if !selected[working_index] {
                 continue;
@@ -480,6 +611,7 @@ fn diffuse_error<const DIVISOR: i32>(
             ];
 
             for &(offset_x, offset_y, weight) in neighbours {
+                let offset_x = if reverse { -offset_x } else { offset_x };
                 let neighbour_x = cell_x as i64 + offset_x;
                 let neighbour_y = cell_y as i64 + offset_y;
                 if neighbour_x < 0
@@ -663,7 +795,10 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Atkinson, FloydSteinberg, OrderedDither, Palette, Threshold, bayer_value};
+    use super::{
+        DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, OrderedDither, Palette, Threshold,
+        bayer_value,
+    };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
     /// Creates an immutable image from test pixels.
@@ -678,6 +813,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         }
+    }
+
+    fn diffusion(algorithm: DiffusionAlgorithm) -> ErrorDiffusion {
+        ErrorDiffusion::new(Palette::black_and_white(), algorithm)
     }
 
     #[test]
@@ -904,7 +1043,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &FloydSteinberg::new(Palette::black_and_white()),
+                &diffusion(DiffusionAlgorithm::FloydSteinberg),
                 &Selection::All,
             )
             .unwrap();
@@ -928,7 +1067,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &FloydSteinberg::new(Palette::black_and_white()),
+                &diffusion(DiffusionAlgorithm::FloydSteinberg),
                 &Selection::Polygon(polygon),
             )
             .unwrap();
@@ -947,7 +1086,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &FloydSteinberg::new(Palette::black_and_white()),
+                &diffusion(DiffusionAlgorithm::FloydSteinberg),
                 &Selection::All,
             )
             .unwrap();
@@ -971,7 +1110,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &Atkinson::new(Palette::black_and_white()),
+                &diffusion(DiffusionAlgorithm::Atkinson),
                 &Selection::All,
             )
             .unwrap();
@@ -988,7 +1127,7 @@ mod tests {
         let mut output = input;
         let mask = Mask::new(3, 1, vec![255, 0, 255]).unwrap();
 
-        Atkinson::new(Palette::black_and_white())
+        diffusion(DiffusionAlgorithm::Atkinson)
             .apply(&input, &mut output, (3, 1), &mask)
             .unwrap();
 
@@ -1001,7 +1140,7 @@ mod tests {
         let rendered = Renderer::new()
             .render(
                 &source,
-                &Atkinson::new(Palette::black_and_white()),
+                &diffusion(DiffusionAlgorithm::Atkinson),
                 &Selection::All,
             )
             .unwrap();
@@ -1026,7 +1165,7 @@ mod tests {
             ],
         );
 
-        let floyd = FloydSteinberg::new(Palette::black_and_white());
+        let floyd = diffusion(DiffusionAlgorithm::FloydSteinberg);
         let first = Renderer::new()
             .render(&source, &floyd, &Selection::All)
             .unwrap();
@@ -1035,7 +1174,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
 
-        let atkinson = Atkinson::new(Palette::black_and_white());
+        let atkinson = diffusion(DiffusionAlgorithm::Atkinson);
         let first = Renderer::new()
             .render(&source, &atkinson, &Selection::All)
             .unwrap();
@@ -1064,10 +1203,10 @@ mod tests {
                 .unwrap()
                 .with_pixel_size(0)
                 .unwrap_err(),
-            FloydSteinberg::new(Palette::black_and_white())
+            diffusion(DiffusionAlgorithm::FloydSteinberg)
                 .with_pixel_size(0)
                 .unwrap_err(),
-            Atkinson::new(Palette::black_and_white())
+            diffusion(DiffusionAlgorithm::Atkinson)
                 .with_pixel_size(0)
                 .unwrap_err(),
         ];
@@ -1150,10 +1289,10 @@ mod tests {
             .map(|alpha| [100, 100, 100, alpha])
             .collect::<Vec<_>>();
         let source = source(8, 1, &pixels);
-        let floyd = FloydSteinberg::new(Palette::black_and_white())
+        let floyd = diffusion(DiffusionAlgorithm::FloydSteinberg)
             .with_pixel_size(2)
             .unwrap();
-        let atkinson = Atkinson::new(Palette::black_and_white())
+        let atkinson = diffusion(DiffusionAlgorithm::Atkinson)
             .with_pixel_size(2)
             .unwrap();
 
@@ -1174,5 +1313,108 @@ mod tests {
             let value = atkinson_colours[index];
             assert_eq!(*pixel, [value, value, value, (index + 1) as u8]);
         }
+    }
+
+    #[test]
+    fn supports_every_diffusion_algorithm_and_configuration() {
+        let pixels = (0..35)
+            .map(|index| {
+                [
+                    (index * 47) as u8,
+                    (index * 83) as u8,
+                    (index * 131) as u8,
+                    (index * 19) as u8,
+                ]
+            })
+            .collect::<Vec<_>>();
+        let source = source(7, 5, &pixels);
+        let algorithms = [
+            DiffusionAlgorithm::FloydSteinberg,
+            DiffusionAlgorithm::Atkinson,
+            DiffusionAlgorithm::JarvisJudiceNinke,
+            DiffusionAlgorithm::Stucki,
+            DiffusionAlgorithm::Burkes,
+            DiffusionAlgorithm::Sierra,
+            DiffusionAlgorithm::TwoRowSierra,
+            DiffusionAlgorithm::SierraLite,
+        ];
+
+        for algorithm in algorithms {
+            let effect = ErrorDiffusion::new(Palette::black_and_white(), algorithm)
+                .with_scan(DiffusionScan::Serpentine)
+                .with_pixel_size(2)
+                .unwrap();
+            let rendered = Renderer::new()
+                .render(&source, &effect, &Selection::All)
+                .unwrap();
+
+            assert_eq!(effect.algorithm(), algorithm);
+            assert_eq!(effect.scan(), DiffusionScan::Serpentine);
+            assert_eq!(effect.pixel_size(), 2);
+            assert_eq!(effect.palette(), &Palette::black_and_white());
+            for (before, after) in source
+                .rgba8_bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(rendered.rgba8_bytes().as_chunks::<4>().0)
+            {
+                assert!(after[..3] == [0; 3] || after[..3] == [255; 3]);
+                assert_eq!(after[3], before[3]);
+            }
+        }
+
+        assert_eq!(
+            ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
+                .with_pixel_size(0)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidParameter
+        );
+    }
+
+    #[test]
+    fn serpentine_scan_is_anchored_to_image_rows() {
+        let selected_row = [
+            [20, 20, 20, 1],
+            [70, 70, 70, 2],
+            [110, 110, 110, 3],
+            [140, 140, 140, 4],
+            [170, 170, 170, 5],
+            [220, 220, 220, 6],
+        ];
+        let mut pixels = vec![[0, 0, 0, 255]; 6];
+        pixels.extend(selected_row);
+        let image = source(6, 2, &pixels);
+        let mask = Mask::new(6, 2, [vec![0; 6], vec![255; 6]].concat()).unwrap();
+        let effect = ErrorDiffusion::new(
+            Palette::black_and_white(),
+            DiffusionAlgorithm::FloydSteinberg,
+        )
+        .with_scan(DiffusionScan::Serpentine);
+        let mut actual = image.rgba8_bytes().to_vec();
+        effect
+            .apply(image.rgba8_bytes(), &mut actual, (6, 2), &mask)
+            .unwrap();
+
+        let reversed = selected_row.into_iter().rev().collect::<Vec<_>>();
+        let reversed_source = source(6, 1, &reversed);
+        let reference = Renderer::new()
+            .render(
+                &reversed_source,
+                &diffusion(DiffusionAlgorithm::FloydSteinberg),
+                &Selection::All,
+            )
+            .unwrap();
+        let expected = reference
+            .rgba8_bytes()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .rev()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(&actual[6 * 4..], expected);
     }
 }

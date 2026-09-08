@@ -11,7 +11,10 @@ re-render pipelines.
 ## Features
 
 - Greyscale and Gaussian blur
-- Threshold, ordered Bayer, Floyd-Steinberg, and Atkinson dithering
+- Threshold and ordered Bayer dithering
+- Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, Stucki, Burkes, Sierra,
+  Two-Row Sierra, and Sierra Lite error diffusion
+- Raster and serpentine error-diffusion scanning
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Configurable logical pixel sizes for every dithering method
 - Whole-image and polygon selections with anti-aliased edges
@@ -24,14 +27,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.1"
+ditherlib = "0.3"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.1", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.3", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -82,6 +85,28 @@ always begins from the unchanged `SourceImage`.
 `Palette::monochrome(colour)` combines black, the supplied RGB colour, and
 white. `Palette::new` accepts any non-empty collection of RGB colours.
 
+## Error diffusion
+
+`ErrorDiffusion` provides all diffusion presets and supports raster or
+serpentine scanning.
+
+```rust,no_run
+use ditherlib::{
+    DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, Palette, Renderer,
+    Selection, read,
+};
+
+# fn run() -> ditherlib::Result<()> {
+let source = read("input.png")?;
+let effect = ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
+    .with_scan(DiffusionScan::Serpentine)
+    .with_pixel_size(2)?;
+let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
+# let _ = rendered;
+# Ok(())
+# }
+```
+
 ## Errors
 
 Fallible operations return `ditherlib::Result<T>`. Use `DitherError::kind()`
@@ -99,7 +124,13 @@ Every example accepts an input path and output path:
 ```sh
 cargo run --release --example pipeline -- input.jpg output.png
 cargo run --release --example polygon_pipeline -- input.jpg output.png
+cargo run --release --example diffusion_comparison -- input.jpg first.png second.png
 ```
+
+The diffusion comparison requires an image with even dimensions. `first.png`
+uses Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, and Stucki from top-left
+to bottom-right. `second.png` uses Burkes, Sierra, Two-Row Sierra, and Sierra
+Lite in the same order.
 
 Additional examples cover each built-in effect in the [`examples`](./examples/)
 directory.

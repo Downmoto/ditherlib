@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 - 2026-09-08
+
+### Added
+
+- Added configurable error diffusion with Floyd-Steinberg, Atkinson,
+  Jarvis-Judice-Ninke, Stucki, Burkes, Sierra, Two-Row Sierra, and Sierra Lite
+  presets.
+- Added raster and serpentine scan modes for configurable error diffusion.
+- Added a two-image comparison example covering every diffusion preset in
+  equal-sized polygon quadrants.
+
+### Removed
+
+- Replaced the standalone `FloydSteinberg` and `Atkinson` effects with their
+  `DiffusionAlgorithm` presets on `ErrorDiffusion`.
+
 ## 0.2.0 - 2026-09-08
 
 ### Performance
