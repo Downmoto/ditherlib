@@ -236,31 +236,65 @@ fn rasterise_polygon(
     coverage: &mut [u8],
 ) -> Option<(u32, u32, u32, u32)> {
     let (min_x, min_y, max_x, max_y) = polygon_pixel_bounds(polygon, width, height);
+    if min_x == max_x || min_y == max_y {
+        return None;
+    }
     let mut coverage_bounds = None;
+    let mut crossings = Vec::with_capacity(polygon.vertices.len());
+    let mut boundary_edges = Vec::with_capacity(polygon.vertices.len());
 
     for y in min_y..max_y {
-        for x in min_x..max_x {
-            let mut covered_samples = 0;
+        let row_start = y as usize * width as usize;
+        let row = &mut coverage[row_start + min_x as usize..row_start + max_x as usize];
 
-            for sample_y in 0..SAMPLES_PER_AXIS {
+        for sample_y in 0..SAMPLES_PER_AXIS {
+            let sample_y = y as f32 + (sample_y as f32 + 0.5) / SAMPLES_PER_AXIS as f32;
+            // Every horizontal sample shares these crossings and possible boundary edges.
+            crossings.clear();
+            boundary_edges.clear();
+            let mut previous = polygon.vertices[polygon.vertices.len() - 1];
+
+            for &current in &polygon.vertices {
+                if sample_y >= previous.y.min(current.y) && sample_y <= previous.y.max(current.y) {
+                    boundary_edges.push((previous, current));
+                }
+                if (current.y > sample_y) != (previous.y > sample_y) {
+                    crossings.push(
+                        (previous.x - current.x) * (sample_y - current.y)
+                            / (previous.y - current.y)
+                            + current.x,
+                    );
+                }
+                previous = current;
+            }
+
+            for (offset, covered_samples) in row.iter_mut().enumerate() {
+                let x = min_x + offset as u32;
                 for sample_x in 0..SAMPLES_PER_AXIS {
                     let point = Point {
                         x: x as f32 + (sample_x as f32 + 0.5) / SAMPLES_PER_AXIS as f32,
-                        y: y as f32 + (sample_y as f32 + 0.5) / SAMPLES_PER_AXIS as f32,
+                        y: sample_y,
                     };
 
-                    if polygon_contains(polygon, point) {
-                        covered_samples += 1;
+                    if boundary_edges
+                        .iter()
+                        .any(|&(start, end)| point_is_on_segment(point, start, end))
+                        || crossings
+                            .iter()
+                            .fold(false, |inside, &crossing| inside ^ (point.x < crossing))
+                    {
+                        *covered_samples += 1;
                     }
                 }
             }
+        }
 
-            let value =
-                ((covered_samples * u32::from(u8::MAX) + SAMPLE_COUNT / 2) / SAMPLE_COUNT) as u8;
-            coverage[y as usize * width as usize + x as usize] = value;
+        for (offset, value) in row.iter_mut().enumerate() {
+            *value =
+                ((u32::from(*value) * u32::from(u8::MAX) + SAMPLE_COUNT / 2) / SAMPLE_COUNT) as u8;
 
-            if value != 0 {
-                include_pixel(&mut coverage_bounds, x, y);
+            if *value != 0 {
+                include_pixel(&mut coverage_bounds, min_x + offset as u32, y);
             }
         }
     }
@@ -303,13 +337,21 @@ fn polygon_pixel_bounds(polygon: &Polygon, width: u32, height: u32) -> (u32, u32
     )
 }
 
-/// Tests a point against a polygon using the even-odd fill rule.
+/// Retains the original per-point calculation as an independent rasterisation oracle.
+#[cfg(test)]
 fn polygon_contains(polygon: &Polygon, point: Point) -> bool {
     let mut inside = false;
     let mut previous = polygon.vertices[polygon.vertices.len() - 1];
 
     for &current in &polygon.vertices {
-        if point_is_on_segment(point, previous, current) {
+        let cross = (point.y - previous.y) * (current.x - previous.x)
+            - (point.x - previous.x) * (current.y - previous.y);
+        if cross.abs() <= f32::EPSILON
+            && point.x >= previous.x.min(current.x)
+            && point.x <= previous.x.max(current.x)
+            && point.y >= previous.y.min(current.y)
+            && point.y <= previous.y.max(current.y)
+        {
             return true;
         }
 
@@ -329,18 +371,21 @@ fn polygon_contains(polygon: &Polygon, point: Point) -> bool {
 
 /// Reports whether a point lies on the closed line segment from start to end.
 fn point_is_on_segment(point: Point, start: Point, end: Point) -> bool {
+    if point.x < start.x.min(end.x)
+        || point.x > start.x.max(end.x)
+        || point.y < start.y.min(end.y)
+        || point.y > start.y.max(end.y)
+    {
+        return false;
+    }
     let cross = (point.y - start.y) * (end.x - start.x) - (point.x - start.x) * (end.y - start.y);
 
     cross.abs() <= f32::EPSILON
-        && point.x >= start.x.min(end.x)
-        && point.x <= start.x.max(end.x)
-        && point.y >= start.y.min(end.y)
-        && point.y <= start.y.max(end.y)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Mask, Point, Polygon, Selection};
+    use super::{Mask, Point, Polygon, SAMPLE_COUNT, SAMPLES_PER_AXIS, Selection};
     use crate::ErrorKind;
 
     #[test]
@@ -426,5 +471,114 @@ mod tests {
         let mask = Selection::Polygon(polygon).rasterise(4, 4).unwrap();
 
         assert_eq!(mask.coverage_bytes(), &[0; 16]);
+    }
+
+    #[test]
+    fn scanline_rasterisation_matches_per_sample_reference() {
+        let check = |vertices: Vec<Point>, width, height| {
+            let Ok(polygon) = Polygon::new(vertices) else {
+                return;
+            };
+            let mut expected = vec![0; width as usize * height as usize];
+            let (min_x, min_y, max_x, max_y) = super::polygon_pixel_bounds(&polygon, width, height);
+            for y in min_y..max_y {
+                for x in min_x..max_x {
+                    let mut samples = 0;
+                    for sample_y in 0..SAMPLES_PER_AXIS {
+                        for sample_x in 0..SAMPLES_PER_AXIS {
+                            let point = Point::new(
+                                x as f32 + (sample_x as f32 + 0.5) / SAMPLES_PER_AXIS as f32,
+                                y as f32 + (sample_y as f32 + 0.5) / SAMPLES_PER_AXIS as f32,
+                            );
+                            samples += u32::from(super::polygon_contains(&polygon, point));
+                        }
+                    }
+                    expected[y as usize * width as usize + x as usize] =
+                        ((samples * 255 + SAMPLE_COUNT / 2) / SAMPLE_COUNT) as u8;
+                }
+            }
+            let actual = Selection::Polygon(polygon.clone())
+                .rasterise(width, height)
+                .unwrap();
+            assert_eq!(
+                actual,
+                Mask::new(width, height, expected).unwrap(),
+                "vertices: {:?}",
+                polygon.vertices()
+            );
+        };
+
+        for vertices in [
+            vec![
+                (0.125, 0.125),
+                (20.875, 0.125),
+                (20.875, 18.875),
+                (0.125, 18.875),
+            ],
+            vec![(0.0, 0.0), (21.0, 19.0), (0.0, 19.0), (21.0, 0.0)],
+            vec![
+                (0.125, 0.125),
+                (0.125, 0.125),
+                (20.875, 0.125),
+                (0.125, 18.875),
+            ],
+            vec![(-10.0, -10.0), (-1.0, -10.0), (-10.0, -1.0)],
+            vec![
+                (0.125, 0.125),
+                (20.875, 0.125 + f32::EPSILON),
+                (0.125, 18.875),
+            ],
+            vec![
+                (-f32::MAX, -f32::MAX),
+                (f32::MAX, f32::MAX),
+                (0.125, 18.875),
+            ],
+            vec![(-f32::MAX, 0.125), (f32::MAX, 18.875), (0.125, -f32::MAX)],
+            vec![
+                (-0.0, f32::from_bits(1)),
+                (f32::MIN_POSITIVE, 18.875),
+                (20.875, 0.125),
+            ],
+        ] {
+            check(
+                vertices
+                    .into_iter()
+                    .map(|(x, y)| Point::new(x, y))
+                    .collect(),
+                23,
+                21,
+            );
+        }
+
+        let mut state = 0x6d61_736b_u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state
+        };
+        for index in 0..128 {
+            let vertices = (0..3 + index % 8)
+                .map(|_| {
+                    let mut coordinate = || {
+                        let bits = next();
+                        if index % 4 == 0 {
+                            f32::from_bits(bits & 0xff7f_ffff)
+                        } else {
+                            (bits % 320) as f32 / 8.0 - 8.0
+                        }
+                    };
+                    Point::new(coordinate(), coordinate())
+                })
+                .collect();
+            check(vertices, 23, 21);
+        }
+        check(
+            vec![
+                Point::new(0.0, 0.0),
+                Point::new(2.0, 0.0),
+                Point::new(0.0, 2.0),
+            ],
+            0,
+            2,
+        );
     }
 }

@@ -104,19 +104,21 @@ fn expand_bounds(bounds: Bounds, dimensions: (u32, u32), margin: u32) -> Bounds 
     )
 }
 
-/// Copies a rectangular region from an RGBA8 image into a private image buffer.
-fn crop_image(input: &[u8], image_width: u32, bounds: Bounds) -> Result<image::RgbaImage> {
+/// Copies RGB channels into a private buffer; source alpha is preserved later.
+fn crop_image(input: &[u8], image_width: u32, bounds: Bounds) -> Result<image::RgbImage> {
     let width = bounds.2 - bounds.0;
     let height = bounds.3 - bounds.1;
     let row_length = width as usize * 4;
-    let mut pixels = Vec::with_capacity(row_length * height as usize);
+    let mut pixels = Vec::with_capacity(width as usize * height as usize * 3);
 
     for y in bounds.1..bounds.3 {
         let start = (y as usize * image_width as usize + bounds.0 as usize) * 4;
-        pixels.extend_from_slice(&input[start..start + row_length]);
+        for pixel in input[start..start + row_length].as_chunks::<4>().0 {
+            pixels.extend_from_slice(&pixel[..3]);
+        }
     }
 
-    image::RgbaImage::from_raw(width, height, pixels).ok_or_else(|| {
+    image::RgbImage::from_raw(width, height, pixels).ok_or_else(|| {
         DitherError::new(
             ErrorKind::DimensionMismatch,
             "blur input does not match its image dimensions",
@@ -144,7 +146,7 @@ fn copy_blurred_selection(
             }
             let image_index = pixel_index * 4;
             let crop_index =
-                ((y - crop.1) as usize * crop_width as usize + (x - crop.0) as usize) * 4;
+                ((y - crop.1) as usize * crop_width as usize + (x - crop.0) as usize) * 3;
             output[image_index..image_index + 3]
                 .copy_from_slice(&blurred[crop_index..crop_index + 3]);
             output[image_index + 3] = input[image_index + 3];
@@ -155,7 +157,7 @@ fn copy_blurred_selection(
 #[cfg(test)]
 mod tests {
     use super::Blur;
-    use crate::{ErrorKind, Point, Polygon, Renderer, Selection, SourceImage};
+    use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
     /// Creates an immutable image from test pixels.
     fn source(width: u32, height: u32, pixels: &[[u8; 4]]) -> SourceImage {
@@ -275,6 +277,61 @@ mod tests {
                 let expected = full_blur.get_pixel(x, y).0;
                 assert_eq!(rendered.pixel(x, y).unwrap()[..3], expected[..3]);
                 assert_eq!(rendered.pixel(x, y).unwrap()[3], 123);
+            }
+        }
+    }
+
+    #[test]
+    fn rgb_blur_matches_rgba_blur_with_varied_alpha_and_masks() {
+        for (width, height) in [(0, 0), (1, 1), (1, 31), (31, 1), (17, 19), (65, 49)] {
+            let input: Vec<u8> = (0..width * height)
+                .flat_map(|i| {
+                    [
+                        ((i * 97 + 13) % 256) as u8,
+                        ((i * 53 + 129) % 256) as u8,
+                        ((i * 193 + 251) % 256) as u8,
+                        (i * 73 % 256) as u8,
+                    ]
+                })
+                .collect();
+            let rgba = image::RgbaImage::from_raw(width, height, input.clone()).unwrap();
+            for sigma in [0.0, 0.1, 0.7, 1.0, 2.5, 8.0, 20.0] {
+                let reference = if sigma == 0.0 {
+                    rgba.clone()
+                } else {
+                    image::imageops::fast_blur(&rgba, sigma)
+                };
+                for mask_kind in 0..4 {
+                    let coverage: Vec<u8> = (0..width * height)
+                        .map(|i| match mask_kind {
+                            0 => 255,
+                            1 => 0,
+                            2 if (width / 3..width * 2 / 3).contains(&(i % width))
+                                && (height / 3..height * 2 / 3).contains(&(i / width)) =>
+                            {
+                                ((i * 37 + 1) % 256) as u8
+                            }
+                            3 if i % 5 == 0 => 255,
+                            _ => 0,
+                        })
+                        .collect();
+                    let mask = Mask::new(width, height, coverage).unwrap();
+                    let mut output = input.clone();
+                    Blur::new(sigma)
+                        .unwrap()
+                        .apply(&input, &mut output, (width, height), &mask)
+                        .unwrap();
+                    let mut expected = input.clone();
+                    for (i, pixel) in expected.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                        if mask.coverage_bytes()[i] != 0 {
+                            pixel[..3].copy_from_slice(&reference.as_raw()[i * 4..i * 4 + 3]);
+                        }
+                    }
+                    assert_eq!(
+                        output, expected,
+                        "{width}x{height}, sigma={sigma}, mask={mask_kind}"
+                    );
+                }
             }
         }
     }

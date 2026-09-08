@@ -35,7 +35,8 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
         Point::new(width * 0.12, height * 0.38),
         Point::new(width * 0.41, height * 0.38),
     ])?;
-    let rendered = Renderer::new().render(&source, &Blur::new(32.0)?, &Selection::Polygon(polygon))?;
+    let rendered =
+        Renderer::new().render(&source, &Blur::new(32.0)?, &Selection::Polygon(polygon))?;
 
     write(output, &rendered)
 }
