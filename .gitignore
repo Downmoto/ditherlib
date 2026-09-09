@@ -2,3 +2,5 @@
 tests/examples
 /*.png
 /*.jpg
+
+*.DS_Store
