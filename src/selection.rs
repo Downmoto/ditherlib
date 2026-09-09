@@ -97,7 +97,7 @@ impl Polygon {
         }
 
         let mut vertices = Vec::with_capacity(sides);
-        
+
         // std::f32::consts::TAU is equivalent to 2 * PI
         let angle_step = std::f32::consts::TAU / (sides as f32);
 
