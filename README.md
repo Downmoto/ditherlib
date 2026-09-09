@@ -25,6 +25,9 @@ re-render pipelines.
 
 ## Installation
 
+```bash
+cargo add ditherlib
+```
 JPEG and PNG support are enabled by default:
 
 ```toml
