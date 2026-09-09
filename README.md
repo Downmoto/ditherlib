@@ -17,6 +17,8 @@ re-render pipelines.
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
+- Bayer, clustered-dot, line, crosshatch, checkerboard, and dispersed-dot
+  threshold maps
 - Custom rectangular threshold maps with strength, offset, rotation, and mirroring
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Configurable logical pixel sizes for every dithering method
@@ -91,6 +93,12 @@ always begins from the unchanged `SourceImage`.
 `ThresholdMap` provides standard Bayer 2x2, 4x4, and 8x8 maps and validates
 custom rectangular maps. Custom values are row-major ranks from zero up to one
 less than the map length; repeated ranks are allowed.
+
+Artistic presets are available through `ThresholdMap::clustered_dots()`,
+`horizontal_lines()`, `vertical_lines()`, `diagonal_lines()`, `crosshatch()`,
+`checkerboard()`, `dispersed_dots_3x3()`, and `dispersed_dots_5x5()`. They tile
+at the image origin and support the same strength, offset, rotation, and
+mirroring controls as Bayer and custom maps.
 
 ```rust
 use ditherlib::{OrderedDither, Palette, ThresholdMap, ThresholdRotation};
@@ -222,6 +230,7 @@ cargo run --release --example polygon_pipeline -- input.jpg output.png
 cargo run --release --example diffusion_comparison -- input.jpg comparison-{1,2,3,4,5,6,7}.png
 cargo run --release --example diffusion_controls -- input.jpg strengths.png clamps.png
 cargo run --release --example ordered_comparison -- input.jpg maps.png strengths.png rotations.png
+cargo run --release --example pattern_sheet -- input.jpg patterns.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 ```
 
@@ -239,6 +248,9 @@ uses strengths 0.0, 0.5, 1.0, and 1.5 from top-left to bottom-right.
 The ordered comparison creates three quadrant images. `maps.png` compares Bayer
 2x2, 4x4, and 8x8 with a custom 3x2 map. `strengths.png` compares 0.25, 0.5,
 1.0, and 1.5. `rotations.png` compares 0, 90, 180, and 270 degrees clockwise.
+
+The pattern sheet creates a labelled grid containing one result for each
+artistic threshold-map preset.
 
 The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
 to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning

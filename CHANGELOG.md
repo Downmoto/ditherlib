@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+### Added
+
+- Added clustered-dot, horizontal-line, vertical-line, diagonal-line,
+  crosshatch, checkerboard, and 3x3 and 5x5 dispersed-dot threshold maps.
+- Added a labelled pattern-sheet example covering every artistic map.
+
 ## 0.5.0
 
 ### Added

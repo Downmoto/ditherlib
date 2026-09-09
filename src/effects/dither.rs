@@ -472,6 +472,64 @@ impl ThresholdMap {
         Self::bayer(8)
     }
 
+    /// Creates a 6x6 clustered-dot threshold map.
+    pub fn clustered_dots() -> Self {
+        Self::preset(
+            6,
+            6,
+            [
+                34, 25, 21, 17, 29, 33, 30, 13, 9, 5, 12, 24, 18, 6, 1, 0, 8, 20, 22, 10, 2, 3, 4,
+                16, 26, 14, 7, 11, 15, 28, 35, 31, 19, 23, 27, 32,
+            ],
+        )
+    }
+
+    /// Creates a 4x4 horizontal-line threshold map.
+    pub fn horizontal_lines() -> Self {
+        Self::preset(4, 4, [0, 0, 0, 0, 8, 8, 8, 8, 12, 12, 12, 12, 4, 4, 4, 4])
+    }
+
+    /// Creates a 4x4 vertical-line threshold map.
+    pub fn vertical_lines() -> Self {
+        Self::preset(4, 4, [0, 8, 12, 4, 0, 8, 12, 4, 0, 8, 12, 4, 0, 8, 12, 4])
+    }
+
+    /// Creates a 4x4 diagonal-line threshold map.
+    pub fn diagonal_lines() -> Self {
+        Self::preset(4, 4, [0, 4, 8, 12, 4, 8, 12, 0, 8, 12, 0, 4, 12, 0, 4, 8])
+    }
+
+    /// Creates a 4x4 crosshatch threshold map.
+    pub fn crosshatch() -> Self {
+        Self::preset(4, 4, [0, 0, 0, 0, 0, 8, 8, 4, 0, 8, 12, 4, 0, 4, 4, 4])
+    }
+
+    /// Creates a 4x4 checkerboard threshold map.
+    pub fn checkerboard() -> Self {
+        Self::preset(
+            4,
+            4,
+            [0, 0, 12, 12, 0, 0, 12, 12, 12, 12, 4, 4, 12, 12, 4, 4],
+        )
+    }
+
+    /// Creates a 3x3 dispersed-dot threshold map.
+    pub fn dispersed_dots_3x3() -> Self {
+        Self::preset(3, 3, [6, 8, 4, 1, 0, 3, 5, 2, 7])
+    }
+
+    /// Creates a 5x5 dispersed-dot threshold map.
+    pub fn dispersed_dots_5x5() -> Self {
+        Self::preset(
+            5,
+            5,
+            [
+                0, 12, 3, 15, 6, 17, 9, 21, 1, 13, 4, 16, 7, 19, 10, 22, 2, 14, 5, 18, 8, 20, 11,
+                23, 24,
+            ],
+        )
+    }
+
     /// Returns the map width.
     pub const fn width(&self) -> u32 {
         self.width
@@ -494,6 +552,20 @@ impl ThresholdMap {
             thresholds: (0..size)
                 .flat_map(|y| (0..size).map(move |x| u32::from(bayer_value(x, y, size as u8))))
                 .collect(),
+        }
+    }
+
+    fn preset<const LENGTH: usize>(width: u32, height: u32, thresholds: [u32; LENGTH]) -> Self {
+        debug_assert_eq!(width as usize * height as usize, LENGTH);
+        debug_assert!(
+            thresholds
+                .iter()
+                .all(|&threshold| threshold < LENGTH as u32)
+        );
+        Self {
+            width,
+            height,
+            thresholds: Box::new(thresholds),
         }
     }
 
@@ -2125,6 +2197,47 @@ mod tests {
         ] {
             assert_eq!(map.width(), map.height());
             assert_eq!(map.thresholds(), expected);
+        }
+    }
+
+    #[test]
+    fn artistic_threshold_maps_are_distinct_and_tile_after_transformations() {
+        let maps = [
+            ThresholdMap::clustered_dots(),
+            ThresholdMap::horizontal_lines(),
+            ThresholdMap::vertical_lines(),
+            ThresholdMap::diagonal_lines(),
+            ThresholdMap::crosshatch(),
+            ThresholdMap::checkerboard(),
+            ThresholdMap::dispersed_dots_3x3(),
+            ThresholdMap::dispersed_dots_5x5(),
+        ];
+        for (index, map) in maps.iter().enumerate() {
+            assert!(maps[..index].iter().all(|other| other != map));
+
+            for rotation in [
+                ThresholdRotation::None,
+                ThresholdRotation::Clockwise90,
+                ThresholdRotation::Clockwise180,
+                ThresholdRotation::Clockwise270,
+            ] {
+                for (mirror_x, mirror_y) in
+                    [(false, false), (true, false), (false, true), (true, true)]
+                {
+                    let effect = OrderedDither::new(Palette::black_and_white(), map.clone())
+                        .with_offset(-7, 11)
+                        .with_rotation(rotation)
+                        .with_mirroring(mirror_x, mirror_y);
+                    let (width, height) = effect.transformed_dimensions();
+
+                    for y in 0..height * 2 {
+                        for x in 0..width * 2 {
+                            assert_eq!(effect.threshold(x, y), effect.threshold(x + width, y));
+                            assert_eq!(effect.threshold(x, y), effect.threshold(x, y + height));
+                        }
+                    }
+                }
+            }
         }
     }
 
