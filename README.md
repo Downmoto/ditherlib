@@ -14,8 +14,8 @@ re-render pipelines.
 
 - Greyscale and Gaussian blur
 - Threshold and ordered Bayer dithering
-- Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, Stucki, Burkes, Sierra,
-  Two-Row Sierra, and Sierra Lite error diffusion
+- Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
+  broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Configurable logical pixel sizes for every dithering method
@@ -152,6 +152,25 @@ fn main() -> ditherlib::Result<()> {
 }
 ```
 
+Built-in presets have distinct grain and edge behaviour:
+
+| Preset | Visual character |
+| --- | --- |
+| Floyd-Steinberg | Crisp, balanced detail with a familiar fine grain |
+| Atkinson | High contrast with clean highlights, shadows, and clustered dots |
+| Jarvis-Judice-Ninke | Soft, finely dispersed grain with smooth tonal changes |
+| Stucki | Sharp detail with broad, even error distribution |
+| Burkes | Clean two-row texture with less softness than Stucki |
+| Sierra | Smooth, balanced grain with gentle transitions |
+| Two-Row Sierra | Compact, moderately crisp grain |
+| Sierra Lite | Fast, coarse texture with visible directional structure |
+| False Floyd-Steinberg | Coarse, strongly directional texture |
+| Fan | Compact, left-leaning grain with pronounced diagonal structure |
+| Shiau-Fan | Short-tailed texture designed to reduce worm artefacts |
+| Shiau-Fan 2 | Longer-tailed grain with smoother highlight and shadow texture |
+| Stevenson-Arce | Very fine, dispersed grain with smooth tones and preserved detail |
+| Two-dimensional Knuth | Minimal, regular diagonal texture |
+
 ## Errors
 
 Fallible operations return `ditherlib::Result<T>`. Use `DitherError::kind()`
@@ -169,15 +188,17 @@ Every example accepts an input path and output path:
 ```sh
 cargo run --release --example pipeline -- input.jpg output.png
 cargo run --release --example polygon_pipeline -- input.jpg output.png
-cargo run --release --example diffusion_comparison -- input.jpg first.png second.png
+cargo run --release --example diffusion_comparison -- input.jpg comparison-{1,2,3,4,5,6,7}.png
 cargo run --release --example diffusion_controls -- input.jpg strengths.png clamps.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 ```
 
-The diffusion comparison requires an image with even dimensions. `first.png`
-uses Floyd-Steinberg, Atkinson, Jarvis-Judice-Ninke, and Stucki from top-left
-to bottom-right. `second.png` uses Burkes, Sierra, Two-Row Sierra, and Sierra
-Lite in the same order.
+The diffusion comparison requires an image with an even width and creates seven
+side-by-side comparisons. From `comparison-1.png` through `comparison-7.png`,
+the left/right pairs are Floyd-Steinberg/Atkinson,
+Jarvis-Judice-Ninke/Stucki, Burkes/Sierra, Two-Row Sierra/Sierra Lite, False
+Floyd-Steinberg/Fan, Shiau-Fan/Shiau-Fan 2, and
+Stevenson-Arce/Two-dimensional Knuth.
 
 The diffusion controls example creates two quadrant comparisons. `strengths.png`
 uses strengths 0.0, 0.5, 1.0, and 1.5 from top-left to bottom-right.

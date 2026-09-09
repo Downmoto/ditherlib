@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.3
+
+### Added
+
+- Added False Floyd-Steinberg, Fan, Shiau-Fan, Shiau-Fan 2,
+  Stevenson-Arce, and Two-dimensional Knuth error-diffusion presets.
+- Expanded the diffusion comparison to seven evenly divided images, giving
+  every built-in preset half of a full-size input image.
+- Documented the visual character of every built-in diffusion preset.
+
+## 0.4.2
+
+### Fixed
+
+- Excluded image assets and test fixtures from the published crate package.
+
+## 0.4.1
+
+### Added
+
+- Added rectangle, centred-square, and regular-polygon convenience constructors.
+- Added an attributed sample image and README showcase.
+
 ## 0.4.0
 
 ### Added
