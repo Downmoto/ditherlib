@@ -54,13 +54,14 @@ monochrome ordered dither inside a polygon:
 
 ```rust,no_run
 use ditherlib::{
-    Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer,
-    Selection, ThresholdMap, read, write,
+    Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer, 
+    Colour, Selection, ThresholdMap, read, write,
 };
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.jpg")?;
-    let (width, height) = source.dimensions();
+    let width = source.width() as f32;
+    let height = source.height() as f32;
 
     let centre = Point::new(width * 0.5, height * 0.5);
     let area = Polygon::centered_square(centre, width / 1.50)?;
@@ -69,7 +70,7 @@ fn main() -> ditherlib::Result<()> {
     pipeline.add(Greyscale, Selection::All);
     pipeline.add(
         OrderedDither::new(
-            Palette::monochrome([220, 20, 60]),
+            Palette::monochrome(Colour::RED),
             ThresholdMap::bayer_4x4(),
         )
             .with_pixel_size(4)?,
