@@ -13,10 +13,11 @@ re-render pipelines.
 ## Features
 
 - Greyscale and Gaussian blur
-- Threshold and ordered Bayer dithering
+- Threshold and configurable ordered dithering
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
+- Custom rectangular threshold maps with strength, offset, rotation, and mirroring
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Configurable logical pixel sizes for every dithering method
 - Whole-image and polygon selections with anti-aliased edges
@@ -32,14 +33,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.4"
+ditherlib = "0.5"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.4", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.5", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -54,23 +55,23 @@ monochrome ordered dither inside a polygon:
 ```rust,no_run
 use ditherlib::{
     Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer,
-    Selection, read, write,
+    Selection, ThresholdMap, read, write,
 };
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.jpg")?;
     let (width, height) = source.dimensions();
-    let area = Polygon::new([
-        Point::new(width as f32 * 0.20, height as f32 * 0.20),
-        Point::new(width as f32 * 0.80, height as f32 * 0.20),
-        Point::new(width as f32 * 0.80, height as f32 * 0.80),
-        Point::new(width as f32 * 0.20, height as f32 * 0.80),
-    ])?;
+
+    let centre = Point::new(width * 0.5, height * 0.5);
+    let area = Polygon::centered_square(centre, width / 1.50)?;
 
     let mut pipeline = Pipeline::new();
     pipeline.add(Greyscale, Selection::All);
     pipeline.add(
-        OrderedDither::new(Palette::monochrome([220, 20, 60]), 4)?
+        OrderedDither::new(
+            Palette::monochrome([220, 20, 60]),
+            ThresholdMap::bayer_4x4(),
+        )
             .with_pixel_size(4)?,
         Selection::Polygon(area),
     );
@@ -83,6 +84,32 @@ fn main() -> ditherlib::Result<()> {
 Pipeline order matters. Each step receives the result of the previous step,
 including where polygon selections overlap. Rendering the same pipeline again
 always begins from the unchanged `SourceImage`.
+
+## Ordered dithering
+
+`ThresholdMap` provides standard Bayer 2x2, 4x4, and 8x8 maps and validates
+custom rectangular maps. Custom values are row-major ranks from zero up to one
+less than the map length; repeated ranks are allowed.
+
+```rust
+use ditherlib::{OrderedDither, Palette, ThresholdMap, ThresholdRotation};
+
+fn main() -> ditherlib::Result<()> {
+    let map = ThresholdMap::new(3, 2, [0, 3, 1, 4, 2, 5])?;
+    let effect = OrderedDither::new(Palette::black_and_white(), map)
+        .with_strength(0.75)?
+        .with_offset(1, 0)
+        .with_rotation(ThresholdRotation::Clockwise90)
+        .with_mirroring(true, false);
+    assert_eq!(effect.offset(), (1, 0));
+    Ok(())
+}
+```
+
+Offsets use logical pixels and move the map right and down for positive values.
+Rotation is clockwise. Mirroring applies horizontally and vertically after
+rotation. Every transformation remains anchored to the image origin when an
+effect targets a polygon.
 
 ## Palettes
 
@@ -193,6 +220,7 @@ cargo run --release --example pipeline -- input.jpg output.png
 cargo run --release --example polygon_pipeline -- input.jpg output.png
 cargo run --release --example diffusion_comparison -- input.jpg comparison-{1,2,3,4,5,6,7}.png
 cargo run --release --example diffusion_controls -- input.jpg strengths.png clamps.png
+cargo run --release --example ordered_comparison -- input.jpg maps.png strengths.png rotations.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 ```
 
@@ -206,6 +234,10 @@ Stevenson-Arce/Two-dimensional Knuth.
 The diffusion controls example creates two quadrant comparisons. `strengths.png`
 uses strengths 0.0, 0.5, 1.0, and 1.5 from top-left to bottom-right.
 `clamps.png` uses error limits of 0, 24, 64, and unlimited in the same order.
+
+The ordered comparison creates three quadrant images. `maps.png` compares Bayer
+2x2, 4x4, and 8x8 with a custom 3x2 map. `strengths.png` compares 0.25, 0.5,
+1.0, and 1.5. `rotations.png` compares 0, 90, 180, and 270 degrees clockwise.
 
 The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
 to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning

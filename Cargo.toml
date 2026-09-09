@@ -1,6 +1,6 @@
 [package]
 name = "ditherlib"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2024"
 description = "Non-destructive image effects and dithering for whole images and polygon selections"
 documentation = "https://docs.rs/ditherlib"

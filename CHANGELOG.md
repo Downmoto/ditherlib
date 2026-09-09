@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- Added validated custom rectangular threshold maps and Bayer 2x2, 4x4, and
+  8x8 map constructors.
+- Added ordered-dither strength, x/y offset, clockwise rotation, and horizontal
+  and vertical mirroring.
+- Added a comparison example for Bayer size, strength, and rotation.
+
+### Changed
+
+- `OrderedDither::new` now accepts a `ThresholdMap`; the superseded numeric
+  Bayer matrix-size API has been removed.
+
 ## 0.4.3
 
 ### Added

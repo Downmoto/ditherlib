@@ -1,8 +1,8 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
 use ditherlib::{
-    Blur, Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer, Selection, read,
-    write,
+    Blur, Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer, Selection,
+    ThresholdMap, read, write,
 };
 
 fn main() -> ExitCode {
@@ -49,7 +49,8 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     let mut pipeline = Pipeline::new();
     pipeline.add(Greyscale, Selection::Polygon(greyscale_area));
     pipeline.add(
-        OrderedDither::new(Palette::monochrome([200, 0, 80]), 4)?.with_pixel_size(4)?,
+        OrderedDither::new(Palette::monochrome([200, 0, 80]), ThresholdMap::bayer_4x4())
+            .with_pixel_size(4)?,
         Selection::Polygon(dither_area),
     );
     pipeline.add(Blur::new(8.0)?, Selection::Polygon(blur_area));

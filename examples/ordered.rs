@@ -1,6 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{OrderedDither, Palette, Renderer, Selection, read, write};
+use ditherlib::{OrderedDither, Palette, Renderer, Selection, ThresholdMap, read, write};
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
@@ -21,7 +21,11 @@ fn main() -> ExitCode {
 
 fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     let source = read(input)?;
-    let effect = OrderedDither::new(Palette::monochrome([200, 30, 30]), 4)?.with_pixel_size(4)?;
+    let effect = OrderedDither::new(
+        Palette::monochrome([200, 30, 30]),
+        ThresholdMap::bayer_4x4(),
+    )
+    .with_pixel_size(4)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write(output, &rendered)
 }

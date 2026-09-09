@@ -2,6 +2,7 @@ use crate::{DitherError, Effect, ErrorKind, Mask, Result};
 
 const FIXED_SCALE: i32 = 256;
 const DIFFUSION_STRENGTH_SCALE: u16 = 256;
+const THRESHOLD_STRENGTH_SCALE: u16 = 256;
 const FLOYD_STEINBERG: &[DiffusionTap] = &[
     DiffusionTap::new(1, 0, 7),
     DiffusionTap::new(-1, 1, 3),
@@ -403,37 +404,156 @@ impl Effect for Threshold {
     }
 }
 
-/// Applies ordered dithering using a Bayer threshold matrix.
+/// A validated rectangular pattern of threshold ranks.
 ///
-/// The matrix is anchored to the image origin, including when rendering a
-/// polygon selection. Supported matrix sizes are 2, 4, and 8 pixels square.
+/// Each rank must be less than the number of entries in the map. Ranks may be
+/// repeated, which permits patterns beyond dispersed-dot matrices.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OrderedDither {
-    palette: Palette,
-    matrix_size: u8,
-    pixel_size: u32,
+pub struct ThresholdMap {
+    width: u32,
+    height: u32,
+    thresholds: Box<[u32]>,
 }
 
-impl OrderedDither {
-    /// Creates ordered dithering with a supported Bayer matrix size.
+impl ThresholdMap {
+    /// Creates a custom row-major threshold map.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidParameter`] unless `matrix_size` is 2, 4,
-    /// or 8.
-    pub fn new(palette: Palette, matrix_size: u8) -> Result<Self> {
-        if !matches!(matrix_size, 2 | 4 | 8) {
+    /// Returns [`ErrorKind::InvalidParameter`] when either dimension is zero,
+    /// the number of thresholds does not match the dimensions, or a threshold
+    /// is outside the map's rank range.
+    pub fn new(width: u32, height: u32, thresholds: impl Into<Box<[u32]>>) -> Result<Self> {
+        let thresholds = thresholds.into();
+        let Some(length) = width.checked_mul(height) else {
             return Err(DitherError::new(
                 ErrorKind::InvalidParameter,
-                "Bayer matrix size must be 2, 4, or 8",
+                "threshold map dimensions are too large",
+            ));
+        };
+        if length == 0 {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "threshold map dimensions must be greater than zero",
+            ));
+        }
+        if thresholds.len() != length as usize {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "threshold count must match the map dimensions",
+            ));
+        }
+        if thresholds.iter().any(|&threshold| threshold >= length) {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "threshold ranks must be less than the map length",
             ));
         }
 
         Ok(Self {
-            palette,
-            matrix_size,
-            pixel_size: 1,
+            width,
+            height,
+            thresholds,
         })
+    }
+
+    /// Creates the standard 2x2 Bayer threshold map.
+    pub fn bayer_2x2() -> Self {
+        Self::bayer(2)
+    }
+
+    /// Creates the standard 4x4 Bayer threshold map.
+    pub fn bayer_4x4() -> Self {
+        Self::bayer(4)
+    }
+
+    /// Creates the standard 8x8 Bayer threshold map.
+    pub fn bayer_8x8() -> Self {
+        Self::bayer(8)
+    }
+
+    /// Returns the map width.
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the map height.
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Returns the row-major threshold ranks.
+    pub fn thresholds(&self) -> &[u32] {
+        &self.thresholds
+    }
+
+    fn bayer(size: u32) -> Self {
+        Self {
+            width: size,
+            height: size,
+            thresholds: (0..size)
+                .flat_map(|y| (0..size).map(move |x| u32::from(bayer_value(x, y, size as u8))))
+                .collect(),
+        }
+    }
+
+    fn bayer_size(&self) -> Option<u32> {
+        matches!(self.width, 2 | 4 | 8)
+            .then_some(self.width)
+            .filter(|&size| self.height == size)
+            .filter(|&size| {
+                self.thresholds.iter().enumerate().all(|(index, &value)| {
+                    let index = index as u32;
+                    value == u32::from(bayer_value(index % size, index / size, size as u8))
+                })
+            })
+    }
+}
+
+/// A clockwise rotation applied to a threshold map.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ThresholdRotation {
+    /// Leaves the map unrotated.
+    #[default]
+    None,
+    /// Rotates the map 90 degrees clockwise.
+    Clockwise90,
+    /// Rotates the map 180 degrees clockwise.
+    Clockwise180,
+    /// Rotates the map 270 degrees clockwise.
+    Clockwise270,
+}
+
+/// Applies ordered dithering using a configurable threshold map.
+///
+/// The map is anchored to image-origin logical pixel coordinates, including
+/// when rendering a polygon selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrderedDither {
+    palette: Palette,
+    map: ThresholdMap,
+    pixel_size: u32,
+    strength: u16,
+    offset: (i32, i32),
+    rotation: ThresholdRotation,
+    mirror_x: bool,
+    mirror_y: bool,
+}
+
+impl OrderedDither {
+    /// Creates ordered dithering with a validated threshold map.
+    pub const fn new(palette: Palette, map: ThresholdMap) -> Self {
+        Self {
+            palette,
+            map,
+            pixel_size: 1,
+            strength: THRESHOLD_STRENGTH_SCALE,
+            offset: (0, 0),
+            rotation: ThresholdRotation::None,
+            mirror_x: false,
+            mirror_y: false,
+        }
     }
 
     /// Returns the target palette.
@@ -441,9 +561,9 @@ impl OrderedDither {
         &self.palette
     }
 
-    /// Returns the width and height of the square Bayer matrix.
-    pub const fn matrix_size(&self) -> u8 {
-        self.matrix_size
+    /// Returns the threshold map.
+    pub const fn map(&self) -> &ThresholdMap {
+        &self.map
     }
 
     /// Sets the width and height of each square logical pixel.
@@ -460,6 +580,107 @@ impl OrderedDither {
     pub const fn pixel_size(&self) -> u32 {
         self.pixel_size
     }
+
+    /// Sets the strength of the threshold adjustment.
+    ///
+    /// Strength is rounded to the nearest 1/256. Zero disables the map's
+    /// adjustment, one uses it unchanged, and two doubles it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] unless `strength` is finite and
+    /// between zero and two inclusive.
+    pub fn with_strength(mut self, strength: f32) -> Result<Self> {
+        if !strength.is_finite() || !(0.0..=2.0).contains(&strength) {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "threshold strength must be between zero and two",
+            ));
+        }
+        self.strength = (strength * f32::from(THRESHOLD_STRENGTH_SCALE)).round() as u16;
+        Ok(self)
+    }
+
+    /// Returns the threshold adjustment strength.
+    pub fn strength(&self) -> f32 {
+        f32::from(self.strength) / f32::from(THRESHOLD_STRENGTH_SCALE)
+    }
+
+    /// Offsets the map by logical pixels along the x and y axes.
+    pub const fn with_offset(mut self, x: i32, y: i32) -> Self {
+        self.offset = (x, y);
+        self
+    }
+
+    /// Returns the map offset as `(x, y)` logical pixels.
+    pub const fn offset(&self) -> (i32, i32) {
+        self.offset
+    }
+
+    /// Rotates the threshold map clockwise around its origin.
+    pub const fn with_rotation(mut self, rotation: ThresholdRotation) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    /// Returns the map rotation.
+    pub const fn rotation(&self) -> ThresholdRotation {
+        self.rotation
+    }
+
+    /// Mirrors the transformed map horizontally and vertically.
+    pub const fn with_mirroring(mut self, horizontal: bool, vertical: bool) -> Self {
+        self.mirror_x = horizontal;
+        self.mirror_y = vertical;
+        self
+    }
+
+    /// Returns whether horizontal mirroring is enabled.
+    pub const fn mirror_x(&self) -> bool {
+        self.mirror_x
+    }
+
+    /// Returns whether vertical mirroring is enabled.
+    pub const fn mirror_y(&self) -> bool {
+        self.mirror_y
+    }
+
+    fn transformed_dimensions(&self) -> (u32, u32) {
+        match self.rotation {
+            ThresholdRotation::None | ThresholdRotation::Clockwise180 => {
+                (self.map.width, self.map.height)
+            }
+            ThresholdRotation::Clockwise90 | ThresholdRotation::Clockwise270 => {
+                (self.map.height, self.map.width)
+            }
+        }
+    }
+
+    fn transformed_threshold(&self, mut x: u32, mut y: u32) -> u32 {
+        let (width, height) = self.transformed_dimensions();
+        debug_assert!(x < width && y < height);
+        if self.mirror_x {
+            x = width - x - 1;
+        }
+        if self.mirror_y {
+            y = height - y - 1;
+        }
+        let (x, y) = match self.rotation {
+            ThresholdRotation::None => (x, y),
+            ThresholdRotation::Clockwise90 => (y, self.map.height - x - 1),
+            ThresholdRotation::Clockwise180 => (self.map.width - x - 1, self.map.height - y - 1),
+            ThresholdRotation::Clockwise270 => (self.map.width - y - 1, x),
+        };
+        self.map.thresholds[(y * self.map.width + x) as usize]
+    }
+
+    #[cfg(test)]
+    fn threshold(&self, x: u32, y: u32) -> u32 {
+        let (width, height) = self.transformed_dimensions();
+        let x = (i64::from(x) - i64::from(self.offset.0)).rem_euclid(i64::from(width)) as u32;
+        let y = (i64::from(y) - i64::from(self.offset.1)).rem_euclid(i64::from(height)) as u32;
+        self.transformed_threshold(x, y)
+    }
 }
 
 impl Effect for OrderedDither {
@@ -470,15 +691,68 @@ impl Effect for OrderedDither {
         dimensions: (u32, u32),
         mask: &Mask,
     ) -> Result<()> {
-        let size = u32::from(self.matrix_size);
-        let levels = (size * size) as i32;
-        let mut adjustments = [0; 64];
-        for y in 0..size {
-            for x in 0..size {
-                let threshold = i32::from(bayer_value(x, y, self.matrix_size));
-                adjustments[(y * size + x) as usize] =
-                    (2 * threshold + 1 - levels) * 255 / (2 * levels);
+        let bayer_size = self.map.bayer_size();
+        if self.strength == THRESHOLD_STRENGTH_SCALE
+            && self.offset == (0, 0)
+            && self.rotation == ThresholdRotation::None
+            && !self.mirror_x
+            && !self.mirror_y
+            && let Some(size) = bayer_size
+        {
+            let levels = (size * size) as i32;
+            let mut adjustments = [0; 64];
+            for y in 0..size {
+                for x in 0..size {
+                    let threshold = i32::from(bayer_value(x, y, size as u8));
+                    adjustments[(y * size + x) as usize] =
+                        (2 * threshold + 1 - levels) * 255 / (2 * levels);
+                }
             }
+            quantise_cells(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.pixel_size,
+                |colour, x, y| {
+                    let adjustment = adjustments[((y % size) * size + x % size) as usize];
+                    let colour =
+                        colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
+                    self.palette.nearest_colour(colour)
+                },
+            );
+            return Ok(());
+        }
+
+        let (width, height) = self.transformed_dimensions();
+        let levels = i64::from(self.map.width * self.map.height);
+        let adjustments = (0..height)
+            .flat_map(|y| {
+                (0..width).map(move |x| {
+                    let threshold = i64::from(self.transformed_threshold(x, y));
+                    let adjustment = (2 * threshold + 1 - levels) * 255 / (2 * levels);
+                    (adjustment * i64::from(self.strength) / i64::from(THRESHOLD_STRENGTH_SCALE))
+                        as i32
+                })
+            })
+            .collect::<Box<[_]>>();
+        let offset_x = i64::from(self.offset.0).rem_euclid(i64::from(width)) as u32;
+        let offset_y = i64::from(self.offset.1).rem_euclid(i64::from(height)) as u32;
+        if offset_x == 0 && offset_y == 0 {
+            quantise_cells(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.pixel_size,
+                |colour, x, y| {
+                    let adjustment = adjustments[((y % height) * width + x % width) as usize];
+                    let colour =
+                        colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
+                    self.palette.nearest_colour(colour)
+                },
+            );
+            return Ok(());
         }
         quantise_cells(
             input,
@@ -487,7 +761,19 @@ impl Effect for OrderedDither {
             mask,
             self.pixel_size,
             |colour, x, y| {
-                let adjustment = adjustments[((y % size) * size + x % size) as usize];
+                let x = x % width;
+                let y = y % height;
+                let x = if x >= offset_x {
+                    x - offset_x
+                } else {
+                    width - (offset_x - x)
+                };
+                let y = if y >= offset_y {
+                    y - offset_y
+                } else {
+                    height - (offset_y - y)
+                };
+                let adjustment = adjustments[(y * width + x) as usize];
                 let colour =
                     colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
                 self.palette.nearest_colour(colour)
@@ -1327,7 +1613,7 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 mod tests {
     use super::{
         Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap,
-        ErrorDiffusion, OrderedDither, Palette, Threshold, bayer_value,
+        ErrorDiffusion, OrderedDither, Palette, Threshold, ThresholdMap, ThresholdRotation,
     };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -1797,23 +2083,19 @@ mod tests {
     }
 
     #[test]
-    fn validates_bayer_matrix_sizes() {
-        for size in [2, 4, 8] {
-            assert_eq!(
-                OrderedDither::new(Palette::black_and_white(), size)
-                    .unwrap()
-                    .matrix_size(),
-                size
-            );
-        }
+    fn validates_custom_threshold_maps() {
+        let map = ThresholdMap::new(3, 2, [0, 3, 1, 4, 2, 5]).unwrap();
+        assert_eq!(map.width(), 3);
+        assert_eq!(map.height(), 2);
+        assert_eq!(map.thresholds(), &[0, 3, 1, 4, 2, 5]);
 
-        for size in [0, 1, 3, 16] {
-            assert_eq!(
-                OrderedDither::new(Palette::black_and_white(), size)
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidParameter
-            );
+        for result in [
+            ThresholdMap::new(0, 2, Box::<[u32]>::default()),
+            ThresholdMap::new(2, 0, Box::<[u32]>::default()),
+            ThresholdMap::new(2, 2, [0, 1, 2].as_slice()),
+            ThresholdMap::new(2, 2, [0, 1, 2, 4].as_slice()),
+        ] {
+            assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidParameter);
         }
     }
 
@@ -1836,24 +2118,31 @@ mod tests {
             ),
         ];
 
-        for (size, expected) in expected {
-            let actual = (0..size)
-                .flat_map(|y| (0..size).map(move |x| bayer_value(x, y, size as u8)))
-                .collect::<Vec<_>>();
-            assert_eq!(actual, expected);
+        for (map, expected) in [
+            (ThresholdMap::bayer_2x2(), expected[0].1.clone()),
+            (ThresholdMap::bayer_4x4(), expected[1].1.clone()),
+            (ThresholdMap::bayer_8x8(), expected[2].1.clone()),
+        ] {
+            assert_eq!(map.width(), map.height());
+            assert_eq!(map.thresholds(), expected);
         }
     }
 
     #[test]
     fn renders_exact_pixels_for_each_bayer_size() {
-        for size in [2, 4, 8] {
-            let source = source(size.into(), 1, &vec![[128, 128, 128, 90]; size.into()]);
-            let effect = OrderedDither::new(Palette::black_and_white(), size).unwrap();
+        for map in [
+            ThresholdMap::bayer_2x2(),
+            ThresholdMap::bayer_4x4(),
+            ThresholdMap::bayer_8x8(),
+        ] {
+            let size = map.width();
+            let source = source(size, 1, &vec![[128, 128, 128, 90]; size as usize]);
+            let effect = OrderedDither::new(Palette::black_and_white(), map);
             let rendered = Renderer::new()
                 .render(&source, &effect, &Selection::All)
                 .unwrap();
 
-            for x in 0..u32::from(size) {
+            for x in 0..size {
                 let value = if x % 2 == 0 { 0 } else { 255 };
                 assert_eq!(rendered.pixel(x, 0), Some([value, value, value, 90]));
             }
@@ -1861,9 +2150,78 @@ mod tests {
     }
 
     #[test]
+    fn transforms_rectangular_threshold_maps() {
+        let map = ThresholdMap::new(3, 2, [0, 1, 2, 3, 4, 5]).unwrap();
+        let effect = OrderedDither::new(Palette::black_and_white(), map);
+
+        assert_eq!(
+            (0..6).map(|x| effect.threshold(x, 0)).collect::<Vec<_>>(),
+            [0, 1, 2, 0, 1, 2]
+        );
+        let rotated = effect.clone().with_rotation(ThresholdRotation::Clockwise90);
+        assert_eq!(
+            (0..4).map(|x| rotated.threshold(x, 0)).collect::<Vec<_>>(),
+            [3, 0, 3, 0]
+        );
+        let transformed = effect.with_offset(1, -1).with_mirroring(true, true);
+        assert_eq!(
+            (0..3)
+                .map(|x| transformed.threshold(x, 0))
+                .collect::<Vec<_>>(),
+            [0, 2, 1]
+        );
+    }
+
+    #[test]
+    fn renders_exact_pixels_for_a_custom_rectangular_map() {
+        let source = source(3, 2, &[[128, 128, 128, 90]; 6]);
+        let map = ThresholdMap::new(3, 2, [0, 1, 2, 3, 4, 5]).unwrap();
+        let effect = OrderedDither::new(Palette::black_and_white(), map);
+        let rendered = Renderer::new()
+            .render(&source, &effect, &Selection::All)
+            .unwrap();
+
+        assert_eq!(
+            rendered.rgba8_bytes(),
+            &[
+                0, 0, 0, 90, 0, 0, 0, 90, 0, 0, 0, 90, 255, 255, 255, 90, 255, 255, 255, 90, 255,
+                255, 255, 90,
+            ]
+        );
+    }
+
+    #[test]
+    fn configures_threshold_strength_and_transformations() {
+        let effect = OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
+            .with_strength(0.5)
+            .unwrap()
+            .with_offset(-2, 3)
+            .with_rotation(ThresholdRotation::Clockwise270)
+            .with_mirroring(true, false);
+        assert_eq!(effect.strength(), 0.5);
+        assert_eq!(effect.offset(), (-2, 3));
+        assert_eq!(effect.rotation(), ThresholdRotation::Clockwise270);
+        assert!(effect.mirror_x());
+        assert!(!effect.mirror_y());
+
+        for strength in [-0.1, 2.1, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
+                    .with_strength(strength)
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidParameter
+            );
+        }
+    }
+
+    #[test]
     fn keeps_polygon_patterns_anchored_to_image_coordinates() {
         let source = source(4, 1, &[[128, 128, 128, 80]; 4]);
-        let effect = OrderedDither::new(Palette::black_and_white(), 4).unwrap();
+        let effect = OrderedDither::new(
+            Palette::black_and_white(),
+            ThresholdMap::new(4, 1, [0, 3, 1, 2]).unwrap(),
+        );
         let all = Renderer::new()
             .render(&source, &effect, &Selection::All)
             .unwrap();
@@ -1893,9 +2251,8 @@ mod tests {
         );
         let effect = OrderedDither::new(
             Palette::new([[0, 20, 40], [100, 120, 140], [220, 240, 255]]).unwrap(),
-            4,
-        )
-        .unwrap();
+            ThresholdMap::bayer_4x4(),
+        );
         let first = Renderer::new()
             .render(&source, &effect, &Selection::All)
             .unwrap();
@@ -2068,8 +2425,7 @@ mod tests {
             Threshold::new(Palette::black_and_white())
                 .with_pixel_size(0)
                 .unwrap_err(),
-            OrderedDither::new(Palette::black_and_white(), 2)
-                .unwrap()
+            OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
                 .with_pixel_size(0)
                 .unwrap_err(),
             diffusion(DiffusionAlgorithm::FloydSteinberg)
@@ -2114,8 +2470,7 @@ mod tests {
     #[test]
     fn ordered_dithering_scales_bayer_cells() {
         let source = source(4, 1, &[[128, 128, 128, 9]; 4]);
-        let effect = OrderedDither::new(Palette::black_and_white(), 2)
-            .unwrap()
+        let effect = OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
             .with_pixel_size(2)
             .unwrap();
         let rendered = Renderer::new()
@@ -2138,8 +2493,7 @@ mod tests {
             Point::new(3.0, 1.0),
         ])
         .unwrap();
-        let effect = OrderedDither::new(Palette::black_and_white(), 2)
-            .unwrap()
+        let effect = OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
             .with_pixel_size(2)
             .unwrap();
         let rendered = Renderer::new()

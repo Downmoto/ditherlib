@@ -1,6 +1,8 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{Blur, OrderedDither, Palette, Pipeline, Renderer, Selection, read, write};
+use ditherlib::{
+    Blur, OrderedDither, Palette, Pipeline, Renderer, Selection, ThresholdMap, read, write,
+};
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);
@@ -24,7 +26,8 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     let mut pipeline = Pipeline::new();
     pipeline.add(Blur::new(2.0)?, Selection::All);
     pipeline.add(
-        OrderedDither::new(Palette::black_and_white(), 4)?.with_pixel_size(4)?,
+        OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_4x4())
+            .with_pixel_size(4)?,
         Selection::All,
     );
 
