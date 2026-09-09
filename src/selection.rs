@@ -65,6 +65,53 @@ impl Polygon {
         Ok(Self { vertices })
     }
 
+    /// Creates a rectangle from a top-left origin point.
+    pub fn rectangle(top_left: Point, width: f32, height: f32) -> Result<Self> {
+        Self::new([
+            top_left,
+            Point::new(top_left.x + width, top_left.y),
+            Point::new(top_left.x + width, top_left.y + height),
+            Point::new(top_left.x, top_left.y + height),
+        ])
+    }
+
+    /// Creates a perfect square centred on a specific point.
+    pub fn centered_square(centre: Point, size: f32) -> Result<Self> {
+        let half = size * 0.5;
+        Self::new([
+            Point::new(centre.x - half, centre.y - half),
+            Point::new(centre.x + half, centre.y - half),
+            Point::new(centre.x + half, centre.y + half),
+            Point::new(centre.x - half, centre.y + half),
+        ])
+    }
+
+    /// Creates a regular polygon (e.g., triangle, pentagon, hexagon) centred on a point.
+    /// The `rotation` parameter is in radians (0.0 points to the right).
+    pub fn regular(centre: Point, sides: usize, radius: f32, rotation: f32) -> Result<Self> {
+        if sides < 3 {
+            return Err(DitherError::new(
+                ErrorKind::InvalidPolygon,
+                "a regular polygon requires at least three sides",
+            ));
+        }
+
+        let mut vertices = Vec::with_capacity(sides);
+        
+        // std::f32::consts::TAU is equivalent to 2 * PI
+        let angle_step = std::f32::consts::TAU / (sides as f32);
+
+        for i in 0..sides {
+            let angle = rotation + (i as f32 * angle_step);
+            vertices.push(Point::new(
+                centre.x + angle.cos() * radius,
+                centre.y + angle.sin() * radius,
+            ));
+        }
+
+        Self::new(vertices) // Automatically converts Vec to Box<[Point]> via Into
+    }
+
     /// Returns the polygon's vertices.
     pub fn vertices(&self) -> &[Point] {
         &self.vertices
