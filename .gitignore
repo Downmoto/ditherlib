@@ -1,4 +1,4 @@
 /target
 tests/examples
-*.png
-*.jpg
+/*.png
+/*.jpg

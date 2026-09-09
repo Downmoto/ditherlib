@@ -8,6 +8,8 @@ Source pixels remain immutable after loading. Each render starts from the
 source and produces a separately owned image, so callers can freely edit and
 re-render pipelines.
 
+![samurai](assets/samurai_showcase.jpg "showcase")
+
 ## Features
 
 - Greyscale and Gaussian blur
