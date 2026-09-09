@@ -1,6 +1,6 @@
 [package]
 name = "ditherlib"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "Non-destructive image effects and dithering for whole images and polygon selections"
 documentation = "https://docs.rs/ditherlib"
@@ -10,7 +10,7 @@ homepage = "https://github.com/Downmoto/ditherlib"
 readme = "README.md"
 keywords = ["dithering", "image-processing", "image-effects", "graphics"]
 categories = ["multimedia::images", "graphics", "algorithms"]
-exclude = ["/*.jpg"]
+exclude = ["/*.jpg", "assets/", "tests/fixtures"]
 
 [features]
 default = ["jpeg", "png"]
