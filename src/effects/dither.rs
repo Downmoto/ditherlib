@@ -79,6 +79,46 @@ const SIERRA_LITE: &[DiffusionTap] = &[
     DiffusionTap::new(-1, 1, 1),
     DiffusionTap::new(0, 1, 1),
 ];
+const FALSE_FLOYD_STEINBERG: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 3),
+    DiffusionTap::new(-1, 1, 3),
+    DiffusionTap::new(0, 1, 2),
+];
+const FAN: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 7),
+    DiffusionTap::new(-2, 1, 1),
+    DiffusionTap::new(-1, 1, 3),
+    DiffusionTap::new(0, 1, 5),
+];
+const SHIAU_FAN: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 4),
+    DiffusionTap::new(-2, 1, 1),
+    DiffusionTap::new(-1, 1, 1),
+    DiffusionTap::new(0, 1, 2),
+];
+const SHIAU_FAN_2: &[DiffusionTap] = &[
+    DiffusionTap::new(1, 0, 8),
+    DiffusionTap::new(-3, 1, 1),
+    DiffusionTap::new(-2, 1, 1),
+    DiffusionTap::new(-1, 1, 2),
+    DiffusionTap::new(0, 1, 4),
+];
+const STEVENSON_ARCE: &[DiffusionTap] = &[
+    DiffusionTap::new(2, 0, 32),
+    DiffusionTap::new(-3, 1, 12),
+    DiffusionTap::new(-1, 1, 26),
+    DiffusionTap::new(1, 1, 30),
+    DiffusionTap::new(3, 1, 16),
+    DiffusionTap::new(-2, 2, 12),
+    DiffusionTap::new(0, 2, 26),
+    DiffusionTap::new(2, 2, 12),
+    DiffusionTap::new(-3, 3, 5),
+    DiffusionTap::new(-1, 3, 12),
+    DiffusionTap::new(1, 3, 12),
+    DiffusionTap::new(3, 3, 5),
+];
+const TWO_DIMENSIONAL_KNUTH: &[DiffusionTap] =
+    &[DiffusionTap::new(1, 0, 1), DiffusionTap::new(0, 1, 1)];
 
 /// An RGB colour with 8-bit channels.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -514,6 +554,18 @@ pub enum DiffusionAlgorithm {
     TwoRowSierra,
     /// Sierra Lite's fast three-neighbour kernel.
     SierraLite,
+    /// False Floyd-Steinberg's coarse, strongly directional kernel.
+    FalseFloydSteinberg,
+    /// Fan's compact kernel with a left-leaning lower row.
+    Fan,
+    /// Shiau-Fan's short-tailed kernel for reducing worm artefacts.
+    ShiauFan,
+    /// Shiau-Fan's longer-tailed second kernel for smoother extremes.
+    ShiauFan2,
+    /// Stevenson-Arce's broad hexagonal kernel with fine, dispersed grain.
+    StevensonArce,
+    /// Knuth's minimal two-dimensional kernel with a regular diagonal texture.
+    TwoDimensionalKnuth,
 }
 
 impl DiffusionAlgorithm {
@@ -537,6 +589,12 @@ impl DiffusionAlgorithm {
             Self::Sierra => (SIERRA, 32),
             Self::TwoRowSierra => (TWO_ROW_SIERRA, 16),
             Self::SierraLite => (SIERRA_LITE, 4),
+            Self::FalseFloydSteinberg => (FALSE_FLOYD_STEINBERG, 8),
+            Self::Fan => (FAN, 16),
+            Self::ShiauFan => (SHIAU_FAN, 8),
+            Self::ShiauFan2 => (SHIAU_FAN_2, 16),
+            Self::StevensonArce => (STEVENSON_ARCE, 200),
+            Self::TwoDimensionalKnuth => (TWO_DIMENSIONAL_KNUTH, 2),
         }
     }
 }
@@ -838,6 +896,52 @@ impl ErrorDiffusion {
                 mask,
                 self.parameters(SIERRA_LITE, 0),
             ),
+            Some(DiffusionAlgorithm::FalseFloydSteinberg) => {
+                diffuse_error::<8, SERPENTINE, DEFAULT>(
+                    input,
+                    output,
+                    dimensions,
+                    mask,
+                    self.parameters(FALSE_FLOYD_STEINBERG, 0),
+                )
+            }
+            Some(DiffusionAlgorithm::Fan) => diffuse_error::<16, SERPENTINE, DEFAULT>(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.parameters(FAN, 0),
+            ),
+            Some(DiffusionAlgorithm::ShiauFan) => diffuse_error::<8, SERPENTINE, DEFAULT>(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.parameters(SHIAU_FAN, 0),
+            ),
+            Some(DiffusionAlgorithm::ShiauFan2) => diffuse_error::<16, SERPENTINE, DEFAULT>(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.parameters(SHIAU_FAN_2, 0),
+            ),
+            Some(DiffusionAlgorithm::StevensonArce) => diffuse_error::<200, SERPENTINE, DEFAULT>(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.parameters(STEVENSON_ARCE, 0),
+            ),
+            Some(DiffusionAlgorithm::TwoDimensionalKnuth) => {
+                diffuse_error::<2, SERPENTINE, DEFAULT>(
+                    input,
+                    output,
+                    dimensions,
+                    mask,
+                    self.parameters(TWO_DIMENSIONAL_KNUTH, 0),
+                )
+            }
             None => diffuse_error::<0, SERPENTINE, false>(
                 input,
                 output,
@@ -1246,7 +1350,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_0_3_1_output_for_every_diffusion_preset() {
+    fn renders_exact_pixels_for_every_diffusion_preset() {
         let pixels = (0..35)
             .map(|index| {
                 let value = ((index * 47 + index * index * 3) % 256) as u8;
@@ -1254,38 +1358,164 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let source = source(7, 5, &pixels);
-        let algorithms = [
-            DiffusionAlgorithm::FloydSteinberg,
-            DiffusionAlgorithm::Atkinson,
-            DiffusionAlgorithm::JarvisJudiceNinke,
-            DiffusionAlgorithm::Stucki,
-            DiffusionAlgorithm::Burkes,
-            DiffusionAlgorithm::Sierra,
-            DiffusionAlgorithm::TwoRowSierra,
-            DiffusionAlgorithm::SierraLite,
-        ];
-        let expected = [
-            0xad91ccff1c25d794,
-            0xef9744fca489e2ad,
-            0x0b826bc567c18a14,
-            0x2a9383304415dc4d,
-            0xf901ea661db4d834,
-            0xef9744fca489e2ad,
-            0x5ebc740cdf5958b4,
-            0x8c4a4e3463ac974d,
+        // These maps were recorded after checking each preset's taps and divisor.
+        // `#` is black, `.` is white, and every source alpha is 200.
+        let cases = [
+            (
+                DiffusionAlgorithm::FloydSteinberg,
+                ["##..#.#", ".#.#.#.", "#.#.#.#", "#.##.#.", ".##..#."],
+            ),
+            (
+                DiffusionAlgorithm::Atkinson,
+                ["###..#.", "...##.#", "##..#.#", "#.##..#", ".##.##."],
+            ),
+            (
+                DiffusionAlgorithm::JarvisJudiceNinke,
+                ["###..#.", ".#.##.#", ".#..#.#", "#.##...", ".##.##."],
+            ),
+            (
+                DiffusionAlgorithm::Stucki,
+                ["##...#.", ".#.##.#", "##..#.#", "#.##.#.", ".##.##."],
+            ),
+            (
+                DiffusionAlgorithm::Burkes,
+                ["##..#..", ".#.##.#", "#..##.#", "#.##...", ".##.##."],
+            ),
+            (
+                DiffusionAlgorithm::Sierra,
+                ["###..#.", "...##.#", "##..#.#", "#.##..#", ".##.##."],
+            ),
+            (
+                DiffusionAlgorithm::TwoRowSierra,
+                ["##..#..", ".#.##.#", "##..#.#", "#.##..#", ".##..#."],
+            ),
+            (
+                DiffusionAlgorithm::SierraLite,
+                ["##..#.#", ".#.#.#.", ".#.##.#", "#.#.#..", ".##..#."],
+            ),
+            (
+                DiffusionAlgorithm::FalseFloydSteinberg,
+                ["##..#.#", ".#.##.#", ".#..#.#", "####...", "..#.##."],
+            ),
+            (
+                DiffusionAlgorithm::Fan,
+                ["##..#.#", ".#.#.#.", "#.#.#.#", "#.##.#.", ".##..#."],
+            ),
+            (
+                DiffusionAlgorithm::ShiauFan,
+                ["##..#.#", ".#.#.#.", "#.#.#.#", "#.##.#.", ".##.#.#"],
+            ),
+            (
+                DiffusionAlgorithm::ShiauFan2,
+                ["##..#.#", ".#.#.#.", "#.#.#.#", "#.##.#.", ".##..#."],
+            ),
+            (
+                DiffusionAlgorithm::StevensonArce,
+                ["###..#.", ".#.##.#", ".#..#.#", "#.##...", ".##.##."],
+            ),
+            (
+                DiffusionAlgorithm::TwoDimensionalKnuth,
+                ["##..#.#", ".#.#.#.", "#.#.#.#", "#.##.#.", ".##..#."],
+            ),
         ];
 
-        for (algorithm, expected) in algorithms.into_iter().zip(expected) {
+        for (algorithm, rows) in cases {
             let rendered = Renderer::new()
                 .render(&source, &diffusion(algorithm), &Selection::All)
                 .unwrap();
-            let hash = rendered
-                .rgba8_bytes()
-                .iter()
-                .fold(0xcbf29ce484222325_u64, |hash, byte| {
-                    (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-                });
-            assert_eq!(hash, expected, "changed output for {algorithm:?}");
+            let expected = rows
+                .concat()
+                .bytes()
+                .flat_map(|pixel| match pixel {
+                    b'#' => [0, 0, 0, 200],
+                    b'.' => [255, 255, 255, 200],
+                    _ => unreachable!("pixel maps contain only `#` and `.`"),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rendered.rgba8_bytes(),
+                expected,
+                "changed output for {algorithm:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn exposes_verified_0_4_3_diffusion_weights() {
+        let specifications: &[(DiffusionAlgorithm, &[DiffusionTap], u32)] = &[
+            (
+                DiffusionAlgorithm::FalseFloydSteinberg,
+                &[
+                    DiffusionTap::new(1, 0, 3),
+                    DiffusionTap::new(-1, 1, 3),
+                    DiffusionTap::new(0, 1, 2),
+                ],
+                8,
+            ),
+            (
+                DiffusionAlgorithm::Fan,
+                &[
+                    DiffusionTap::new(1, 0, 7),
+                    DiffusionTap::new(-2, 1, 1),
+                    DiffusionTap::new(-1, 1, 3),
+                    DiffusionTap::new(0, 1, 5),
+                ],
+                16,
+            ),
+            (
+                DiffusionAlgorithm::ShiauFan,
+                &[
+                    DiffusionTap::new(1, 0, 4),
+                    DiffusionTap::new(-2, 1, 1),
+                    DiffusionTap::new(-1, 1, 1),
+                    DiffusionTap::new(0, 1, 2),
+                ],
+                8,
+            ),
+            (
+                DiffusionAlgorithm::ShiauFan2,
+                &[
+                    DiffusionTap::new(1, 0, 8),
+                    DiffusionTap::new(-3, 1, 1),
+                    DiffusionTap::new(-2, 1, 1),
+                    DiffusionTap::new(-1, 1, 2),
+                    DiffusionTap::new(0, 1, 4),
+                ],
+                16,
+            ),
+            (
+                DiffusionAlgorithm::StevensonArce,
+                &[
+                    DiffusionTap::new(2, 0, 32),
+                    DiffusionTap::new(-3, 1, 12),
+                    DiffusionTap::new(-1, 1, 26),
+                    DiffusionTap::new(1, 1, 30),
+                    DiffusionTap::new(3, 1, 16),
+                    DiffusionTap::new(-2, 2, 12),
+                    DiffusionTap::new(0, 2, 26),
+                    DiffusionTap::new(2, 2, 12),
+                    DiffusionTap::new(-3, 3, 5),
+                    DiffusionTap::new(-1, 3, 12),
+                    DiffusionTap::new(1, 3, 12),
+                    DiffusionTap::new(3, 3, 5),
+                ],
+                200,
+            ),
+            (
+                DiffusionAlgorithm::TwoDimensionalKnuth,
+                &[DiffusionTap::new(1, 0, 1), DiffusionTap::new(0, 1, 1)],
+                2,
+            ),
+        ];
+
+        for (algorithm, taps, divisor) in specifications {
+            let kernel = algorithm.kernel();
+            assert_eq!(kernel.taps(), *taps, "wrong weights for {algorithm:?}");
+            assert_eq!(
+                kernel.divisor(),
+                *divisor,
+                "wrong divisor for {algorithm:?}"
+            );
         }
     }
 
@@ -1976,6 +2206,12 @@ mod tests {
             DiffusionAlgorithm::Sierra,
             DiffusionAlgorithm::TwoRowSierra,
             DiffusionAlgorithm::SierraLite,
+            DiffusionAlgorithm::FalseFloydSteinberg,
+            DiffusionAlgorithm::Fan,
+            DiffusionAlgorithm::ShiauFan,
+            DiffusionAlgorithm::ShiauFan2,
+            DiffusionAlgorithm::StevensonArce,
+            DiffusionAlgorithm::TwoDimensionalKnuth,
         ];
 
         for algorithm in algorithms {
