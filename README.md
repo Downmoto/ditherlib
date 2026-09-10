@@ -13,12 +13,13 @@ re-render pipelines.
 ## Features
 
 - Greyscale and Gaussian blur
-- Threshold and configurable ordered dithering
+- Threshold, configurable ordered, and deterministic noise dithering
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
 - Bayer, clustered-dot, line, crosshatch, checkerboard, and dispersed-dot
   threshold maps
+- Built-in 16x16 blue-noise threshold map
 - Custom rectangular threshold maps with strength, offset, rotation, and mirroring
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Configurable logical pixel sizes for every dithering method
@@ -35,14 +36,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.5"
+ditherlib = "0.6"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.5", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.6", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -119,6 +120,28 @@ Offsets use logical pixels and move the map right and down for positive values.
 Rotation is clockwise. Mirroring applies horizontally and vertically after
 rotation. Every transformation remains anchored to the image origin when an
 effect targets a polygon.
+
+## Noise dithering
+
+`NoiseDither` provides deterministic white-noise and blue-noise threshold
+dithering. Its samples are driven by image-origin logical pixel coordinates
+and the seed, so rendering a polygon selection does not shift the noise field.
+
+```rust
+use ditherlib::{NoiseAlgorithm, NoiseDither, Palette};
+
+fn main() -> ditherlib::Result<()> {
+    let effect = NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::Blue)
+        .with_seed(67)
+        .with_strength(0.85)?
+        .with_pixel_size(2)?;
+    assert_eq!(effect.seed(), 67);
+    Ok(())
+}
+```
+
+The fixed map is also available as `ThresholdMap::blue_noise_16x16()` for
+ordered dithering and custom transformations.
 
 ## Palettes
 
@@ -231,6 +254,7 @@ cargo run --release --example diffusion_comparison -- input.jpg comparison-{1,2,
 cargo run --release --example diffusion_controls -- input.jpg strengths.png clamps.png
 cargo run --release --example ordered_comparison -- input.jpg maps.png strengths.png rotations.png
 cargo run --release --example pattern_sheet -- input.jpg patterns.png
+cargo run --release --example noise_comparison -- input.jpg noise.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 ```
 
@@ -251,6 +275,9 @@ The ordered comparison creates three quadrant images. `maps.png` compares Bayer
 
 The pattern sheet creates a labelled grid containing one result for each
 artistic threshold-map preset.
+
+The noise comparison applies white noise to the left half and blue noise to
+the right half with the same seed and strength.
 
 The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
 to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning

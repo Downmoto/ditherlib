@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- Added deterministic white-noise and blue-noise threshold dithering with
+  configurable seeds, strength, and logical pixel size.
+- Added a built-in 16x16 blue-noise threshold map.
+- Added a white-noise and blue-noise comparison example.
+
 ## 0.5.1
 
 ### Added
