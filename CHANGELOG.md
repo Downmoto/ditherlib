@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- Added image-origin-anchored halftone screens with circle, square, diamond,
+  ellipse, line, and cross shapes.
+- Added cell width, cell height, angle, phase, and dot-scale controls.
+- Added monochrome and custom-palette halftone output and a six-shape contact
+  sheet example.
+
 ## 0.6.0
 
 ### Added

@@ -14,6 +14,7 @@ re-render pipelines.
 
 - Greyscale and Gaussian blur
 - Threshold, configurable ordered, and deterministic noise dithering
+- Print-style halftone screens with six dot shapes and arbitrary palettes
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
@@ -36,14 +37,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.6"
+ditherlib = "0.7"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.6", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.7", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -142,6 +143,30 @@ fn main() -> ditherlib::Result<()> {
 
 The fixed map is also available as `ThresholdMap::blue_noise_16x16()` for
 ordered dithering and custom transformations.
+
+## Halftone screens
+
+`Halftone` provides circle, square, diamond, ellipse, line, and cross screens.
+Cell dimensions and phase use image pixels, while angles use clockwise radians.
+The screen remains anchored to the image origin when used with a selection.
+
+```rust
+use ditherlib::{Colour, Halftone, HalftoneShape, Palette};
+
+fn main() -> ditherlib::Result<()> {
+    let effect = Halftone::new(Palette::monochrome(Colour::RED), HalftoneShape::Ellipse)
+        .with_cell_size(12, 8)?
+        .with_angle(std::f32::consts::FRAC_PI_6)?
+        .with_phase(2.0, -1.0)?
+        .with_scale(0.9)?;
+    assert_eq!(effect.cell_width(), 12);
+    Ok(())
+}
+```
+
+Run `cargo run --example halftone_contact_sheet -- INPUT OUTPUT.png` to render
+all six shapes. `Palette::black_and_white()` produces classic monochrome output;
+other built-in or custom palettes produce colour screens.
 
 ## Palettes
 

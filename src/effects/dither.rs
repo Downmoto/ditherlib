@@ -876,6 +876,221 @@ impl Effect for OrderedDither {
     }
 }
 
+/// The dot geometry used by a [`Halftone`] screen.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum HalftoneShape {
+    /// Circular dots.
+    #[default]
+    Circle,
+    /// Square dots.
+    Square,
+    /// Diamond-shaped dots.
+    Diamond,
+    /// Elliptical dots that follow the cell aspect ratio.
+    Ellipse,
+    /// Parallel lines.
+    Line,
+    /// Perpendicular lines forming crosses.
+    Cross,
+}
+
+/// Short alias for [`HalftoneShape`].
+pub type DotShape = HalftoneShape;
+
+/// Applies an image-origin-anchored halftone screen.
+///
+/// Screen angle is measured clockwise in radians. Phase is measured in image
+/// pixels along the rotated screen axes. The palette may be black and white,
+/// monochrome, or contain any number of colours.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Halftone {
+    palette: Palette,
+    shape: HalftoneShape,
+    cell_width: u32,
+    cell_height: u32,
+    angle: f32,
+    phase: (f32, f32),
+    scale: f32,
+}
+
+impl Halftone {
+    /// Creates a halftone screen with 8 by 8 pixel cells.
+    pub const fn new(palette: Palette, shape: HalftoneShape) -> Self {
+        Self {
+            palette,
+            shape,
+            cell_width: 8,
+            cell_height: 8,
+            angle: 0.0,
+            phase: (0.0, 0.0),
+            scale: 1.0,
+        }
+    }
+
+    /// Returns the target palette.
+    pub const fn palette(&self) -> &Palette {
+        &self.palette
+    }
+
+    /// Returns the dot shape.
+    pub const fn shape(&self) -> HalftoneShape {
+        self.shape
+    }
+
+    /// Sets the cell width in pixels.
+    pub fn with_cell_width(mut self, width: u32) -> Result<Self> {
+        self.cell_width = validate_cell_dimension(width)?;
+        Ok(self)
+    }
+
+    /// Returns the cell width in pixels.
+    pub const fn cell_width(&self) -> u32 {
+        self.cell_width
+    }
+
+    /// Sets the cell height in pixels.
+    pub fn with_cell_height(mut self, height: u32) -> Result<Self> {
+        self.cell_height = validate_cell_dimension(height)?;
+        Ok(self)
+    }
+
+    /// Returns the cell height in pixels.
+    pub const fn cell_height(&self) -> u32 {
+        self.cell_height
+    }
+
+    /// Sets both cell dimensions in pixels.
+    pub fn with_cell_size(mut self, width: u32, height: u32) -> Result<Self> {
+        self.cell_width = validate_cell_dimension(width)?;
+        self.cell_height = validate_cell_dimension(height)?;
+        Ok(self)
+    }
+
+    /// Sets the clockwise screen angle in radians.
+    pub fn with_angle(mut self, angle: f32) -> Result<Self> {
+        if !angle.is_finite() {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "halftone angle must be finite",
+            ));
+        }
+        self.angle = angle;
+        Ok(self)
+    }
+
+    /// Returns the clockwise screen angle in radians.
+    pub const fn angle(&self) -> f32 {
+        self.angle
+    }
+
+    /// Sets the screen phase in pixels along its rotated axes.
+    pub fn with_phase(mut self, x: f32, y: f32) -> Result<Self> {
+        if !x.is_finite() || !y.is_finite() {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "halftone phase must be finite",
+            ));
+        }
+        self.phase = (x, y);
+        Ok(self)
+    }
+
+    /// Returns the screen phase in pixels.
+    pub const fn phase(&self) -> (f32, f32) {
+        self.phase
+    }
+
+    /// Sets the dot scale.
+    ///
+    /// Values below one shrink dots and values above one grow them.
+    pub fn with_scale(mut self, scale: f32) -> Result<Self> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "halftone scale must be finite and greater than zero",
+            ));
+        }
+        self.scale = scale;
+        Ok(self)
+    }
+
+    /// Returns the dot scale.
+    pub const fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    fn threshold(&self, x: f32, y: f32) -> f32 {
+        let (sin, cos) = self.angle.sin_cos();
+        let screen_x = cos * x + sin * y - self.phase.0;
+        let screen_y = -sin * x + cos * y - self.phase.1;
+        let width = self.cell_width as f32;
+        let height = self.cell_height as f32;
+        let x = screen_x.rem_euclid(width) - width * 0.5;
+        let y = screen_y.rem_euclid(height) - height * 0.5;
+        let nx = x.abs() / (width * 0.5);
+        let ny = y.abs() / (height * 0.5);
+        let threshold = match self.shape {
+            HalftoneShape::Circle => {
+                let unit = width.min(height) * 0.5;
+                (x * x + y * y).sqrt() / (unit * std::f32::consts::SQRT_2)
+            }
+            HalftoneShape::Square => x.abs().max(y.abs()) / (width.min(height) * 0.5),
+            HalftoneShape::Diamond => (nx + ny) * 0.5,
+            HalftoneShape::Ellipse => (nx * nx + ny * ny).sqrt() / std::f32::consts::SQRT_2,
+            HalftoneShape::Line => ny,
+            HalftoneShape::Cross => nx.min(ny),
+        };
+        (threshold / self.scale).clamp(0.0, 1.0)
+    }
+}
+
+impl Effect for Halftone {
+    fn apply(
+        &self,
+        input: &[u8],
+        output: &mut [u8],
+        dimensions: (u32, u32),
+        mask: &Mask,
+    ) -> Result<()> {
+        let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+            return Ok(());
+        };
+        let image_width = dimensions.0 as usize;
+
+        for y in min_y..max_y {
+            for x in min_x..max_x {
+                let pixel_index = y as usize * image_width + x as usize;
+                if mask.coverage_bytes()[pixel_index] == 0 {
+                    continue;
+                }
+                let byte_index = pixel_index * 4;
+                let adjustment =
+                    ((self.threshold(x as f32 + 0.5, y as f32 + 0.5) - 0.5) * 255.0).round() as i32;
+                let colour = [
+                    input[byte_index],
+                    input[byte_index + 1],
+                    input[byte_index + 2],
+                ]
+                .map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
+                let colour = self.palette.nearest_colour(colour);
+                output[byte_index..byte_index + 3].copy_from_slice(&colour);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_cell_dimension(dimension: u32) -> Result<u32> {
+    if dimension == 0 {
+        return Err(DitherError::new(
+            ErrorKind::InvalidParameter,
+            "halftone cell dimensions must be greater than zero",
+        ));
+    }
+    Ok(dimension)
+}
+
 /// The noise distribution used by [`NoiseDither`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -1875,8 +2090,8 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 mod tests {
     use super::{
         Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap,
-        ErrorDiffusion, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, Threshold,
-        ThresholdMap, ThresholdRotation, blue_noise,
+        ErrorDiffusion, Halftone, HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither,
+        Palette, Threshold, ThresholdMap, ThresholdRotation, blue_noise,
     };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -2657,6 +2872,114 @@ mod tests {
                 .kind(),
             ErrorKind::InvalidParameter
         );
+    }
+
+    #[test]
+    fn configures_and_validates_halftone_screens() {
+        let effect = Halftone::new(Palette::black_and_white(), HalftoneShape::Diamond)
+            .with_cell_size(12, 8)
+            .unwrap()
+            .with_angle(std::f32::consts::FRAC_PI_4)
+            .unwrap()
+            .with_phase(2.5, -1.0)
+            .unwrap()
+            .with_scale(0.75)
+            .unwrap();
+
+        assert_eq!(effect.shape(), HalftoneShape::Diamond);
+        assert_eq!(effect.cell_width(), 12);
+        assert_eq!(effect.cell_height(), 8);
+        assert_eq!(effect.angle(), std::f32::consts::FRAC_PI_4);
+        assert_eq!(effect.phase(), (2.5, -1.0));
+        assert_eq!(effect.scale(), 0.75);
+
+        assert_eq!(
+            Halftone::new(Palette::black_and_white(), HalftoneShape::Circle)
+                .with_cell_width(0)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidParameter
+        );
+        for value in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                Halftone::new(Palette::black_and_white(), HalftoneShape::Circle)
+                    .with_scale(value)
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::InvalidParameter
+            );
+        }
+    }
+
+    #[test]
+    fn halftone_shapes_render_to_the_palette_at_image_edges_and_preserve_alpha() {
+        let pixels = (0..35)
+            .map(|index| [96, 128, 160, (index * 7) as u8])
+            .collect::<Vec<_>>();
+        let source = source(7, 5, &pixels);
+        let palette = Palette::new([[10, 20, 30], [90, 120, 150], [240, 245, 250]]).unwrap();
+
+        for shape in [
+            HalftoneShape::Circle,
+            HalftoneShape::Square,
+            HalftoneShape::Diamond,
+            HalftoneShape::Ellipse,
+            HalftoneShape::Line,
+            HalftoneShape::Cross,
+        ] {
+            let effect = Halftone::new(palette.clone(), shape)
+                .with_cell_size(9, 6)
+                .unwrap()
+                .with_angle(0.37)
+                .unwrap()
+                .with_phase(-2.0, 1.5)
+                .unwrap();
+            let rendered = Renderer::new()
+                .render(&source, &effect, &Selection::All)
+                .unwrap();
+
+            for (before, after) in source
+                .rgba8_bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(rendered.rgba8_bytes().as_chunks::<4>().0)
+            {
+                assert!(palette.colours().contains(&after[..3].try_into().unwrap()));
+                assert_eq!(after[3], before[3]);
+            }
+        }
+    }
+
+    #[test]
+    fn halftone_transformations_stay_anchored_across_selections() {
+        let source = source(12, 8, &[[120, 140, 160, 73]; 96]);
+        let effect = Halftone::new(Palette::monochrome(Colour::RED), HalftoneShape::Cross)
+            .with_cell_size(5, 7)
+            .unwrap()
+            .with_angle(0.63)
+            .unwrap()
+            .with_phase(1.25, -3.5)
+            .unwrap()
+            .with_scale(1.2)
+            .unwrap();
+        let full = Renderer::new()
+            .render(&source, &effect, &Selection::All)
+            .unwrap();
+        let polygon = Polygon::rectangle(Point::new(3.0, 2.0), 6.0, 4.0).unwrap();
+        let selected = Renderer::new()
+            .render(&source, &effect, &Selection::Polygon(polygon))
+            .unwrap();
+
+        for y in 0..8 {
+            for x in 0..12 {
+                if (3..9).contains(&x) && (2..6).contains(&y) {
+                    assert_eq!(selected.pixel(x, y), full.pixel(x, y));
+                } else {
+                    assert_eq!(selected.pixel(x, y), source.pixel(x, y));
+                }
+            }
+        }
     }
 
     #[test]

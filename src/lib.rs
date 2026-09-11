@@ -11,8 +11,8 @@ mod selection;
 
 pub use effects::{
     Blur, Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap,
-    ErrorDiffusion, Greyscale, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, Threshold,
-    ThresholdMap, ThresholdRotation,
+    DotShape, ErrorDiffusion, Greyscale, Halftone, HalftoneShape, NoiseAlgorithm, NoiseDither,
+    OrderedDither, Palette, Threshold, ThresholdMap, ThresholdRotation,
 };
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};
