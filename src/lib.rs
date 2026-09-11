@@ -10,9 +10,10 @@ mod renderer;
 mod selection;
 
 pub use effects::{
-    Blur, Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap,
-    DotShape, ErrorDiffusion, Greyscale, Halftone, HalftoneShape, NoiseAlgorithm, NoiseDither,
-    OrderedDither, Palette, Threshold, ThresholdMap, ThresholdRotation,
+    Blur, ChannelMode, CmykScreenPreset, Color, Colour, ColourChannel, ColourHalftone,
+    ColourHalftoneMode, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap, DotShape,
+    ErrorDiffusion, Greyscale, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm,
+    NoiseDither, OrderedDither, Palette, Threshold, ThresholdMap, ThresholdRotation,
 };
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};

@@ -4,8 +4,9 @@ mod greyscale;
 
 pub use blur::Blur;
 pub use dither::{
-    Color, Colour, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap, DotShape,
-    ErrorDiffusion, Halftone, HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, Palette,
-    Threshold, ThresholdMap, ThresholdRotation,
+    ChannelMode, CmykScreenPreset, Color, Colour, ColourChannel, ColourHalftone,
+    ColourHalftoneMode, DiffusionAlgorithm, DiffusionKernel, DiffusionScan, DiffusionTap, DotShape,
+    ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
+    OrderedDither, Palette, Threshold, ThresholdMap, ThresholdRotation,
 };
 pub use greyscale::Greyscale;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.1
+
+### Added
+
+- Added deterministic colour halftoning with independent RGB and CMYK channel
+  screens.
+- Added traditional and moiré-resistant CMYK angle presets plus per-channel
+  angle and offset controls.
+- Added a source, RGB, and CMYK colour-print comparison example.
+
 ## 0.7.0
 
 ### Added

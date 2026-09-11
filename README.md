@@ -15,6 +15,7 @@ re-render pipelines.
 - Greyscale and Gaussian blur
 - Threshold, configurable ordered, and deterministic noise dithering
 - Print-style halftone screens with six dot shapes and arbitrary palettes
+- Independently angled RGB and CMYK process-print screens
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
@@ -167,6 +168,39 @@ fn main() -> ditherlib::Result<()> {
 Run `cargo run --example halftone_contact_sheet -- INPUT OUTPUT.png` to render
 all six shapes. `Palette::black_and_white()` produces classic monochrome output;
 other built-in or custom palettes produce colour screens.
+
+### Colour halftoning
+
+`ColourHalftone` screens colour separations independently. RGB mode thresholds
+the red, green, and blue light channels and recombines them directly. CMYK mode
+uses under-colour removal to separate cyan, magenta, yellow, and black inks,
+screens each ink, then recombines the subtractive channels into RGB output.
+
+```rust
+use ditherlib::{
+    CmykScreenPreset, ColourHalftone, ColourHalftoneMode, HalftoneChannel,
+    HalftoneShape,
+};
+
+fn main() -> ditherlib::Result<()> {
+    let effect = ColourHalftone::new(ColourHalftoneMode::Cmyk, HalftoneShape::Circle)
+        .with_cell_size(10, 10)?
+        .with_cmyk_preset(CmykScreenPreset::Traditional)?
+        .with_channel_angle(HalftoneChannel::Black, std::f32::consts::FRAC_PI_4)?
+        .with_channel_offset(HalftoneChannel::Yellow, 1.0, 0.5)?;
+    assert_eq!(effect.channel_offset(HalftoneChannel::Yellow), Some((1.0, 0.5)));
+    Ok(())
+}
+```
+
+The traditional CMYK preset uses 15° cyan, 75° magenta, 0° yellow, and 45°
+black screens. The moiré-resistant preset uses 18.4°, 71.6°, 0°, and 45°.
+Angles are clockwise radians in the API. Offsets use pixels along each rotated
+screen's axes. Absolute image coordinates and stateless thresholding make the
+same configuration deterministic across repeated renders and selections.
+
+Run `cargo run --example colour_print_comparison -- INPUT OUTPUT.png` for a
+source, RGB, and CMYK comparison. Tiles retain the source aspect ratio.
 
 ## Palettes
 
