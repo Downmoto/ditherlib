@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- Added RGB, linear RGB, and Oklab palette matching.
+- Added full-colour and luminance-only palette matching plus independent-channel
+  and luminance-only error diffusion.
+- Added a palette-matching comparison example.
+
 ## 0.7.1
 
 ### Added

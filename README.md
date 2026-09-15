@@ -24,6 +24,7 @@ re-render pipelines.
 - Built-in 16x16 blue-noise threshold map
 - Custom rectangular threshold maps with strength, offset, rotation, and mirroring
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
+- RGB, linear RGB, and Oklab palette matching with luminance-only control
 - Configurable logical pixel sizes for every dithering method
 - Whole-image and polygon selections with anti-aliased edges
 - Ordered multi-effect pipelines with reusable rendering buffers
@@ -38,14 +39,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.7"
+ditherlib = "0.8"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.7", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.8", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -228,6 +229,48 @@ fn main() -> ditherlib::Result<()> {
 }
 ```
 
+### Perceptual palette matching
+
+Palettes use gamma-encoded RGB distance by default, preserving the matching and
+rendered output from earlier releases. `ColourSpace::LinearRgb` compares
+linear-light channels, while `ColourSpace::Oklab` compares perceptual lightness
+and opponent colour components. Every palette-based effect uses the palette's
+configured space.
+
+```rust
+use ditherlib::{ColourSpace, Palette, PaletteMatchMode};
+
+let palette = Palette::pico_8()
+    .with_colour_space(ColourSpace::Oklab)
+    .with_matching_mode(PaletteMatchMode::Colour);
+assert_eq!(palette.colour_space(), ColourSpace::Oklab);
+```
+
+`PaletteMatchMode::Luminance` compares only gamma-encoded luma in RGB, physical
+relative luminance in linear RGB, or Oklab lightness. Palette order resolves
+equal distances.
+
+Error diffusion calculates and distributes errors in the palette's colour
+space. Independent-channel diffusion is the default. Luminance mode propagates
+brightness error while leaving chroma error local:
+
+```rust
+use ditherlib::{
+    ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, ErrorDiffusion, Palette,
+};
+
+let effect = ErrorDiffusion::new(
+    Palette::pico_8().with_colour_space(ColourSpace::Oklab),
+    DiffusionAlgorithm::FloydSteinberg,
+)
+.with_error_mode(DiffusionErrorMode::Luminance);
+assert_eq!(effect.error_mode(), DiffusionErrorMode::Luminance);
+```
+
+The palette stores converted entries when its colour space is selected. The
+sRGB transfer constants follow [CSS Color 4](https://www.w3.org/TR/css-color-4/#color-conversion-code),
+and the Oklab matrices follow [Björn Ottosson's reference transform](https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab).
+
 ## Error diffusion
 
 `ErrorDiffusion` accepts a built-in algorithm or a validated custom kernel. It
@@ -315,6 +358,7 @@ cargo run --release --example ordered_comparison -- input.jpg maps.png strengths
 cargo run --release --example pattern_sheet -- input.jpg patterns.png
 cargo run --release --example noise_comparison -- input.jpg noise.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
+cargo run --release --example palette_matching_comparison -- input.jpg matching.png
 ```
 
 The diffusion comparison requires an image with an even width and creates seven
@@ -341,6 +385,10 @@ the right half with the same seed and strength.
 The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
 to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning
 to every quadrant so the palette is the only variable.
+
+The palette-matching comparison keeps the source in the top-left quadrant and
+uses RGB, linear RGB, and Oklab matching in the remaining quadrants in reading
+order. Every processed quadrant uses the same PICO-8 palette.
 
 Additional examples cover each built-in effect in the [`examples`](./examples/)
 directory.

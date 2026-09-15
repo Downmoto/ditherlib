@@ -204,11 +204,59 @@ impl From<Colour> for [u8; 3] {
 /// American English alias for [`Colour`].
 pub type Color = Colour;
 
+/// The space used to compare colours and calculate quantisation errors.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ColourSpace {
+    /// Gamma-encoded sRGB channels. This preserves pre-0.8 behaviour.
+    #[default]
+    Rgb,
+    /// Linear-light sRGB channels.
+    LinearRgb,
+    /// The perceptually uniform Oklab colour space.
+    Oklab,
+}
+
+/// The components considered while matching a colour to a palette.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PaletteMatchMode {
+    /// Compares every component in the selected [`ColourSpace`].
+    #[default]
+    Colour,
+    /// Compares luminance only, retaining the palette's ordering for ties.
+    Luminance,
+}
+
+/// The components through which quantisation error is diffused.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DiffusionErrorMode {
+    /// Diffuses each component independently in the selected colour space.
+    #[default]
+    IndependentChannels,
+    /// Diffuses luminance error without propagating chroma error.
+    Luminance,
+}
+
 /// A non-empty collection of RGB colours available to a dithering effect.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Palette {
     colours: Box<[[u8; 3]]>,
+    components: Box<[[f32; 3]]>,
+    colour_space: ColourSpace,
+    matching_mode: PaletteMatchMode,
 }
+
+impl PartialEq for Palette {
+    fn eq(&self, other: &Self) -> bool {
+        self.colours == other.colours
+            && self.colour_space == other.colour_space
+            && self.matching_mode == other.matching_mode
+    }
+}
+
+impl Eq for Palette {}
 
 impl Palette {
     /// Creates a palette from at least one RGB colour.
@@ -233,7 +281,7 @@ impl Palette {
             ));
         }
 
-        Ok(Self { colours })
+        Ok(Self::from_colours(colours))
     }
 
     /// Creates a palette containing black, white, and one RGB colour.
@@ -246,87 +294,120 @@ impl Palette {
             return Self::black_and_white();
         }
 
-        Self {
-            colours: Box::new([[0, 0, 0], colour, [255, 255, 255]]),
-        }
+        Self::from_colours(Box::new([[0, 0, 0], colour, [255, 255, 255]]))
     }
 
     /// Creates a palette containing black and white.
     pub fn black_and_white() -> Self {
-        Self {
-            colours: Box::new([[0, 0, 0], [255, 255, 255]]),
-        }
+        Self::from_colours(Box::new([[0, 0, 0], [255, 255, 255]]))
     }
 
     /// Creates an eight-level greyscale palette.
     pub fn greyscale() -> Self {
-        Self {
-            colours: Box::new([
-                [0, 0, 0],
-                [36, 36, 36],
-                [73, 73, 73],
-                [109, 109, 109],
-                [146, 146, 146],
-                [182, 182, 182],
-                [219, 219, 219],
-                [255, 255, 255],
-            ]),
-        }
+        Self::from_colours(Box::new([
+            [0, 0, 0],
+            [36, 36, 36],
+            [73, 73, 73],
+            [109, 109, 109],
+            [146, 146, 146],
+            [182, 182, 182],
+            [219, 219, 219],
+            [255, 255, 255],
+        ]))
     }
 
     /// Creates a four-colour green palette inspired by the original Game Boy.
     pub fn game_boy() -> Self {
-        Self {
-            colours: Box::new([[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]]),
-        }
+        Self::from_colours(Box::new([
+            [15, 56, 15],
+            [48, 98, 48],
+            [139, 172, 15],
+            [155, 188, 15],
+        ]))
     }
 
     /// Creates the standard 16-colour CGA palette.
     pub fn cga() -> Self {
-        Self {
-            colours: Box::new([
-                [0, 0, 0],
-                [0, 0, 170],
-                [0, 170, 0],
-                [0, 170, 170],
-                [170, 0, 0],
-                [170, 0, 170],
-                [170, 85, 0],
-                [170, 170, 170],
-                [85, 85, 85],
-                [85, 85, 255],
-                [85, 255, 85],
-                [85, 255, 255],
-                [255, 85, 85],
-                [255, 85, 255],
-                [255, 255, 85],
-                [255, 255, 255],
-            ]),
-        }
+        Self::from_colours(Box::new([
+            [0, 0, 0],
+            [0, 0, 170],
+            [0, 170, 0],
+            [0, 170, 170],
+            [170, 0, 0],
+            [170, 0, 170],
+            [170, 85, 0],
+            [170, 170, 170],
+            [85, 85, 85],
+            [85, 85, 255],
+            [85, 255, 85],
+            [85, 255, 255],
+            [255, 85, 85],
+            [255, 85, 255],
+            [255, 255, 85],
+            [255, 255, 255],
+        ]))
     }
 
     /// Creates the standard 16-colour PICO-8 palette.
     pub fn pico_8() -> Self {
+        Self::from_colours(Box::new([
+            [0, 0, 0],
+            [29, 43, 83],
+            [126, 37, 83],
+            [0, 135, 81],
+            [171, 82, 54],
+            [95, 87, 79],
+            [194, 195, 199],
+            [255, 241, 232],
+            [255, 0, 77],
+            [255, 163, 0],
+            [255, 236, 39],
+            [0, 228, 54],
+            [41, 173, 255],
+            [131, 118, 156],
+            [255, 119, 168],
+            [255, 204, 170],
+        ]))
+    }
+
+    fn from_colours(colours: Box<[[u8; 3]]>) -> Self {
+        let components = colours
+            .iter()
+            .map(|colour| colour_components(*colour, ColourSpace::Rgb))
+            .collect();
         Self {
-            colours: Box::new([
-                [0, 0, 0],
-                [29, 43, 83],
-                [126, 37, 83],
-                [0, 135, 81],
-                [171, 82, 54],
-                [95, 87, 79],
-                [194, 195, 199],
-                [255, 241, 232],
-                [255, 0, 77],
-                [255, 163, 0],
-                [255, 236, 39],
-                [0, 228, 54],
-                [41, 173, 255],
-                [131, 118, 156],
-                [255, 119, 168],
-                [255, 204, 170],
-            ]),
+            colours,
+            components,
+            colour_space: ColourSpace::Rgb,
+            matching_mode: PaletteMatchMode::Colour,
         }
+    }
+
+    /// Selects the colour space used for palette matching.
+    pub fn with_colour_space(mut self, colour_space: ColourSpace) -> Self {
+        self.colour_space = colour_space;
+        self.components = self
+            .colours
+            .iter()
+            .map(|colour| colour_components(*colour, colour_space))
+            .collect();
+        self
+    }
+
+    /// Returns the colour space used for palette matching.
+    pub const fn colour_space(&self) -> ColourSpace {
+        self.colour_space
+    }
+
+    /// Selects full-colour or luminance-only palette matching.
+    pub const fn with_matching_mode(mut self, matching_mode: PaletteMatchMode) -> Self {
+        self.matching_mode = matching_mode;
+        self
+    }
+
+    /// Returns the palette matching mode.
+    pub const fn matching_mode(&self) -> PaletteMatchMode {
+        self.matching_mode
     }
 
     /// Returns the palette's RGB colours in matching order.
@@ -346,20 +427,40 @@ impl Palette {
 
     /// Returns the nearest palette colour to `colour`.
     ///
-    /// Matching uses squared Euclidean distance in RGB byte space. When two
-    /// entries are equally close, the earlier palette entry wins.
+    /// Matching uses the configured colour space and mode. When two entries
+    /// are equally close, the earlier palette entry wins.
     #[inline]
     pub fn nearest_colour(&self, colour: [u8; 3]) -> [u8; 3] {
-        if self.colours.as_ref() == [[0, 0, 0], [255, 255, 255]] {
+        if self.colour_space == ColourSpace::Rgb
+            && self.matching_mode == PaletteMatchMode::Colour
+            && self.colours.as_ref() == [[0, 0, 0], [255, 255, 255]]
+        {
             // The squared distances cross at an RGB sum of 382.5.
             let sum = u16::from(colour[0]) + u16::from(colour[1]) + u16::from(colour[2]);
             return [if sum >= 383 { 255 } else { 0 }; 3];
         }
+        if self.colour_space == ColourSpace::Rgb && self.matching_mode == PaletteMatchMode::Colour {
+            return *self
+                .colours
+                .iter()
+                .min_by_key(|candidate| colour_distance(colour, **candidate))
+                .expect("a palette is always non-empty");
+        }
+        self.nearest_transformed(colour_components(colour, self.colour_space))
+    }
+
+    fn nearest_transformed(&self, colour: [f32; 3]) -> [u8; 3] {
         *self
             .colours
             .iter()
-            .min_by_key(|candidate| colour_distance(colour, **candidate))
+            .zip(&self.components)
+            .min_by(|(_, left), (_, right)| {
+                let left = match_distance(colour, **left, self.colour_space, self.matching_mode);
+                let right = match_distance(colour, **right, self.colour_space, self.matching_mode);
+                left.total_cmp(&right)
+            })
             .expect("a palette is always non-empty")
+            .0
     }
 }
 
@@ -1790,6 +1891,7 @@ pub struct ErrorDiffusion {
     pixel_size: u32,
     strength: u16,
     error_clamp: Option<u8>,
+    error_mode: DiffusionErrorMode,
 }
 
 impl ErrorDiffusion {
@@ -1802,6 +1904,7 @@ impl ErrorDiffusion {
             pixel_size: 1,
             strength: DIFFUSION_STRENGTH_SCALE,
             error_clamp: None,
+            error_mode: DiffusionErrorMode::IndependentChannels,
         }
     }
 
@@ -1890,6 +1993,17 @@ impl ErrorDiffusion {
         self.error_clamp
     }
 
+    /// Selects independent-component or luminance-only error diffusion.
+    pub const fn with_error_mode(mut self, error_mode: DiffusionErrorMode) -> Self {
+        self.error_mode = error_mode;
+        self
+    }
+
+    /// Returns the quantisation error mode.
+    pub const fn error_mode(&self) -> DiffusionErrorMode {
+        self.error_mode
+    }
+
     fn parameters<'a>(
         &'a self,
         taps: &'a [DiffusionTap],
@@ -1901,6 +2015,7 @@ impl ErrorDiffusion {
             pixel_size: self.pixel_size,
             strength: self.strength,
             error_clamp: self.error_clamp,
+            error_mode: self.error_mode,
             custom_divisor,
         }
     }
@@ -1912,6 +2027,19 @@ impl ErrorDiffusion {
         dimensions: (u32, u32),
         mask: &Mask,
     ) {
+        if self.palette.colour_space != ColourSpace::Rgb
+            || self.palette.matching_mode != PaletteMatchMode::Colour
+            || self.error_mode != DiffusionErrorMode::IndependentChannels
+        {
+            diffuse_error_transformed::<SERPENTINE>(
+                input,
+                output,
+                dimensions,
+                mask,
+                self.parameters(self.kernel.taps(), self.kernel.divisor()),
+            );
+            return;
+        }
         if self.strength == DIFFUSION_STRENGTH_SCALE
             && self.error_clamp.is_none()
             && self.kernel.preset().is_some()
@@ -2127,6 +2255,7 @@ struct DiffusionParameters<'a> {
     pixel_size: u32,
     strength: u16,
     error_clamp: Option<u8>,
+    error_mode: DiffusionErrorMode,
     custom_divisor: u32,
 }
 
@@ -2144,6 +2273,7 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool
         pixel_size,
         strength,
         error_clamp,
+        error_mode: _,
         custom_divisor,
     } = parameters;
     let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
@@ -2263,6 +2393,136 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool
                         working[neighbour_index][channel] =
                             working[neighbour_index][channel].saturating_add(contribution as i32);
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Diffuses quantisation errors in linear RGB or Oklab, or by luminance only.
+fn diffuse_error_transformed<const SERPENTINE: bool>(
+    input: &[u8],
+    output: &mut [u8],
+    dimensions: (u32, u32),
+    mask: &Mask,
+    parameters: DiffusionParameters<'_>,
+) {
+    let DiffusionParameters {
+        palette,
+        taps,
+        pixel_size,
+        strength,
+        error_clamp,
+        error_mode,
+        custom_divisor,
+    } = parameters;
+    let Some((min_x, min_y, max_x, max_y)) = mask.coverage_bounds() else {
+        return;
+    };
+    let image_width = dimensions.0 as usize;
+    let start_x = align_to_grid(min_x, pixel_size);
+    let start_y = align_to_grid(min_y, pixel_size);
+    let working_width = (max_x - start_x).div_ceil(pixel_size) as usize;
+    let working_height = (max_y - start_y).div_ceil(pixel_size) as usize;
+    let mut selected = Vec::with_capacity(working_width * working_height);
+    let mut working = Vec::with_capacity(working_width * working_height);
+
+    for cell_y in 0..working_height {
+        for cell_x in 0..working_width {
+            let x = start_x + cell_x as u32 * pixel_size;
+            let y = start_y + cell_y as u32 * pixel_size;
+            let colour = sample_cell(
+                input,
+                mask,
+                image_width,
+                cell_bounds(x, y, pixel_size, dimensions),
+            );
+            selected.push(colour.is_some());
+            working.push(colour_components(
+                colour.unwrap_or([0; 3]),
+                palette.colour_space,
+            ));
+        }
+    }
+
+    let divisor = custom_divisor as f32;
+    let strength = f32::from(strength) / f32::from(DIFFUSION_STRENGTH_SCALE);
+    let error_clamp = error_clamp.map(|maximum| f32::from(maximum) / 255.0);
+    for cell_y in 0..working_height {
+        let reverse = SERPENTINE && (start_y / pixel_size + cell_y as u32) % 2 == 1;
+        for column in 0..working_width {
+            let cell_x = if reverse {
+                working_width - column - 1
+            } else {
+                column
+            };
+            let working_index = cell_y * working_width + cell_x;
+            if !selected[working_index] {
+                continue;
+            }
+
+            let adjusted = clamp_components(working[working_index], palette.colour_space);
+            let colour = palette.nearest_transformed(adjusted);
+            let matched = colour_components(colour, palette.colour_space);
+            let x = start_x + cell_x as u32 * pixel_size;
+            let y = start_y + cell_y as u32 * pixel_size;
+            write_cell(
+                input,
+                output,
+                mask,
+                image_width,
+                cell_bounds(x, y, pixel_size, dimensions),
+                colour,
+            );
+            let mut error = match error_mode {
+                DiffusionErrorMode::IndependentChannels => {
+                    std::array::from_fn(|channel| adjusted[channel] - matched[channel])
+                }
+                DiffusionErrorMode::Luminance => {
+                    let error = colour_luminance(adjusted, palette.colour_space)
+                        - colour_luminance(matched, palette.colour_space);
+                    match palette.colour_space {
+                        ColourSpace::Rgb | ColourSpace::LinearRgb => [error; 3],
+                        ColourSpace::Oklab => [error, 0.0, 0.0],
+                    }
+                }
+            };
+            if let Some(maximum) = error_clamp {
+                error = error.map(|channel| channel.clamp(-maximum, maximum));
+            }
+
+            for tap in taps {
+                let offset_x = if reverse {
+                    -i64::from(tap.offset_x)
+                } else {
+                    i64::from(tap.offset_x)
+                };
+                let offset_y = i64::from(tap.offset_y);
+                let neighbour_x = cell_x as i64 + offset_x;
+                let neighbour_y = cell_y as i64 + offset_y;
+                if neighbour_x < 0
+                    || neighbour_x >= working_width as i64
+                    || neighbour_y < 0
+                    || neighbour_y >= working_height as i64
+                {
+                    continue;
+                }
+                let neighbour_index = neighbour_y as usize * working_width + neighbour_x as usize;
+                if !selected[neighbour_index]
+                    || !diffusion_path_is_selected(
+                        &selected,
+                        working_width,
+                        cell_x,
+                        cell_y,
+                        offset_x,
+                        offset_y,
+                    )
+                {
+                    continue;
+                }
+                let factor = tap.weight as f32 * strength / divisor;
+                for (working, error) in working[neighbour_index].iter_mut().zip(error) {
+                    *working += error * factor;
                 }
             }
         }
@@ -2443,6 +2703,95 @@ fn mix64(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
+/// Converts an RGB byte colour into the selected comparison space.
+fn colour_components(colour: [u8; 3], colour_space: ColourSpace) -> [f32; 3] {
+    let rgb = colour.map(|channel| f32::from(channel) / 255.0);
+    match colour_space {
+        ColourSpace::Rgb => rgb,
+        ColourSpace::LinearRgb => rgb.map(srgb_to_linear),
+        ColourSpace::Oklab => linear_rgb_to_oklab(rgb.map(srgb_to_linear)),
+    }
+}
+
+/// Decodes one gamma-encoded sRGB component into linear light.
+///
+/// The 0.04045 breakpoint, 12.92 linear slope, 0.055 offset, 1.055 scale, and
+/// 2.4 exponent come from the IEC 61966-2-1 sRGB transfer function, reproduced
+/// in CSS Color 4 section 10.2:
+/// <https://www.w3.org/TR/css-color-4/#color-conversion-code>
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Converts linear-light sRGB to Oklab using the reference transform.
+///
+/// The first matrix maps linear sRGB to approximate LMS cone responses. The
+/// cube roots apply Oklab's non-linearity, and the second matrix maps those
+/// responses to lightness and the two opponent-colour axes. Coefficients are
+/// from Björn Ottosson's reference implementation:
+/// <https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab>
+fn linear_rgb_to_oklab([red, green, blue]: [f32; 3]) -> [f32; 3] {
+    let l = (0.412_221_46 * red + 0.536_332_55 * green + 0.051_445_995 * blue).cbrt();
+    let m = (0.211_903_5 * red + 0.680_699_5 * green + 0.107_396_96 * blue).cbrt();
+    let s = (0.088_302_46 * red + 0.281_718_85 * green + 0.629_978_7 * blue).cbrt();
+    [
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    ]
+}
+
+/// Returns luma for gamma-encoded RGB, relative luminance for linear RGB, or
+/// Oklab's native lightness component.
+///
+/// The RGB weights are the BT.709/sRGB coefficients defined by WCAG relative
+/// luminance: <https://www.w3.org/TR/WCAG22/#dfn-relative-luminance>
+fn colour_luminance(colour: [f32; 3], colour_space: ColourSpace) -> f32 {
+    match colour_space {
+        ColourSpace::Rgb | ColourSpace::LinearRgb => {
+            0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2]
+        }
+        ColourSpace::Oklab => colour[0],
+    }
+}
+
+fn match_distance(
+    left: [f32; 3],
+    right: [f32; 3],
+    colour_space: ColourSpace,
+    matching_mode: PaletteMatchMode,
+) -> f32 {
+    match matching_mode {
+        PaletteMatchMode::Colour => left
+            .into_iter()
+            .zip(right)
+            .map(|(left, right)| (left - right) * (left - right))
+            .sum(),
+        PaletteMatchMode::Luminance => {
+            let difference =
+                colour_luminance(left, colour_space) - colour_luminance(right, colour_space);
+            difference * difference
+        }
+    }
+}
+
+fn clamp_components(mut colour: [f32; 3], colour_space: ColourSpace) -> [f32; 3] {
+    match colour_space {
+        ColourSpace::Rgb | ColourSpace::LinearRgb => colour.map(|channel| channel.clamp(0.0, 1.0)),
+        ColourSpace::Oklab => {
+            colour[0] = colour[0].clamp(0.0, 1.0);
+            // CSS Color 4 notes that practical Oklab a/b values stay within ±0.5.
+            colour[1] = colour[1].clamp(-0.5, 0.5);
+            colour[2] = colour[2].clamp(-0.5, 0.5);
+            colour
+        }
+    }
+}
+
 /// Calculates squared Euclidean distance between two RGB colours.
 fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
     left.into_iter()
@@ -2457,10 +2806,11 @@ fn colour_distance(left: [u8; 3], right: [u8; 3]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, DiffusionAlgorithm,
-        DiffusionKernel, DiffusionScan, DiffusionTap, ErrorDiffusion, Halftone, HalftoneChannel,
-        HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, Threshold,
-        ThresholdMap, ThresholdRotation, blue_noise, cmyk_to_rgb, rgb_to_cmyk,
+        CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
+        DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
+        ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
+        OrderedDither, Palette, PaletteMatchMode, Threshold, ThresholdMap, ThresholdRotation,
+        blue_noise, cmyk_to_rgb, colour_components, rgb_to_cmyk,
     };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -2813,6 +3163,153 @@ mod tests {
             Palette::black_and_white().colours(),
             &[[0, 0, 0], [255, 255, 255]]
         );
+        assert_eq!(Palette::black_and_white().colour_space(), ColourSpace::Rgb);
+        assert_eq!(
+            Palette::black_and_white().matching_mode(),
+            PaletteMatchMode::Colour
+        );
+    }
+
+    #[test]
+    fn converts_colour_space_edges_and_reference_values() {
+        assert_eq!(
+            colour_components([0, 0, 0], ColourSpace::LinearRgb),
+            [0.0; 3]
+        );
+        assert_eq!(
+            colour_components([255, 255, 255], ColourSpace::LinearRgb),
+            [1.0; 3]
+        );
+        let middle = colour_components([128, 128, 128], ColourSpace::LinearRgb);
+        assert!(
+            middle
+                .into_iter()
+                .all(|channel| (channel - 0.215_860_53).abs() < 1e-6)
+        );
+
+        let black = colour_components([0, 0, 0], ColourSpace::Oklab);
+        assert!(black.into_iter().all(|component| component.abs() < 1e-6));
+        let white = colour_components([255, 255, 255], ColourSpace::Oklab);
+        assert!((white[0] - 1.0).abs() < 1e-6);
+        assert!(white[1].abs() < 1e-6);
+        assert!(white[2].abs() < 1e-6);
+        let red = colour_components([255, 0, 0], ColourSpace::Oklab);
+        for (actual, expected) in red.into_iter().zip([0.627_955_4, 0.224_863_1, 0.125_846_3]) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn configures_perceptual_and_luminance_palette_matching() {
+        let palette = Palette::new([[255, 0, 0], [0, 255, 0]])
+            .unwrap()
+            .with_colour_space(ColourSpace::LinearRgb)
+            .with_matching_mode(PaletteMatchMode::Luminance);
+        assert_eq!(palette.colour_space(), ColourSpace::LinearRgb);
+        assert_eq!(palette.matching_mode(), PaletteMatchMode::Luminance);
+        assert_eq!(palette.nearest_colour([0, 100, 0]), [255, 0, 0]);
+        assert_eq!(
+            palette
+                .clone()
+                .with_matching_mode(PaletteMatchMode::Colour)
+                .nearest_colour([0, 100, 0]),
+            [0, 255, 0]
+        );
+
+        let colours = (0..=255)
+            .step_by(17)
+            .flat_map(|red| {
+                (0..=255).step_by(17).flat_map(move |green| {
+                    (0..=255)
+                        .step_by(17)
+                        .map(move |blue| [red as u8, green as u8, blue as u8])
+                })
+            })
+            .collect::<Vec<_>>();
+        let palettes = [ColourSpace::Rgb, ColourSpace::LinearRgb, ColourSpace::Oklab]
+            .map(|space| Palette::pico_8().with_colour_space(space));
+        assert!(colours.into_iter().any(|colour| {
+            let matches = palettes
+                .each_ref()
+                .map(|palette| palette.nearest_colour(colour));
+            matches[0] != matches[1] && matches[1] != matches[2]
+        }));
+    }
+
+    #[test]
+    fn diffuses_errors_in_each_colour_space_and_mode() {
+        let pixels = (0..63)
+            .map(|index| {
+                [
+                    (index * 47) as u8,
+                    (index * 89) as u8,
+                    (index * 137) as u8,
+                    (index * 23) as u8,
+                ]
+            })
+            .collect::<Vec<_>>();
+        let source = source(9, 7, &pixels);
+
+        for colour_space in [ColourSpace::Rgb, ColourSpace::LinearRgb, ColourSpace::Oklab] {
+            for matching_mode in [PaletteMatchMode::Colour, PaletteMatchMode::Luminance] {
+                for error_mode in [
+                    DiffusionErrorMode::IndependentChannels,
+                    DiffusionErrorMode::Luminance,
+                ] {
+                    let palette = Palette::pico_8()
+                        .with_colour_space(colour_space)
+                        .with_matching_mode(matching_mode);
+                    let effect =
+                        ErrorDiffusion::new(palette.clone(), DiffusionAlgorithm::FloydSteinberg)
+                            .with_error_mode(error_mode);
+                    let first = Renderer::new()
+                        .render(&source, &effect, &Selection::All)
+                        .unwrap();
+                    let second = Renderer::new()
+                        .render(&source, &effect, &Selection::All)
+                        .unwrap();
+                    assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+                    assert_eq!(effect.error_mode(), error_mode);
+                    for (before, after) in source
+                        .rgba8_bytes()
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(first.rgba8_bytes().as_chunks::<4>().0)
+                    {
+                        assert!(palette.colours().contains(&after[..3].try_into().unwrap()));
+                        assert_eq!(after[3], before[3]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_perceptual_diffusion_matches_threshold_quantisation() {
+        for colour_space in [ColourSpace::LinearRgb, ColourSpace::Oklab] {
+            let palette = Palette::pico_8().with_colour_space(colour_space);
+            let source = source(
+                4,
+                1,
+                &[
+                    [20, 80, 140, 1],
+                    [70, 130, 190, 2],
+                    [120, 180, 240, 3],
+                    [200, 100, 40, 4],
+                ],
+            );
+            let threshold = Renderer::new()
+                .render(&source, &Threshold::new(palette.clone()), &Selection::All)
+                .unwrap();
+            let diffusion = ErrorDiffusion::new(palette, DiffusionAlgorithm::FloydSteinberg)
+                .with_strength(0.0)
+                .unwrap();
+            let rendered = Renderer::new()
+                .render(&source, &diffusion, &Selection::All)
+                .unwrap();
+            assert_eq!(rendered.rgba8_bytes(), threshold.rgba8_bytes());
+        }
     }
 
     #[test]
