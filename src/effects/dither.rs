@@ -1,4 +1,6 @@
-use crate::{DitherError, Effect, ErrorKind, Mask, Result};
+use std::collections::HashMap;
+
+use crate::{DitherError, Effect, ErrorKind, Mask, Result, SourceImage};
 
 const FIXED_SCALE: i32 = 256;
 const DIFFUSION_STRENGTH_SCALE: u16 = 256;
@@ -239,11 +241,23 @@ pub enum DiffusionErrorMode {
     Luminance,
 }
 
+/// The number of source colours retained by [`Palette::from_source`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PaletteSize {
+    /// Retains every distinct visible source colour.
+    #[default]
+    All,
+    /// Reduces the source colours to at most this many representatives.
+    Limited(usize),
+}
+
 /// A non-empty collection of RGB colours available to a dithering effect.
 #[derive(Clone, Debug)]
 pub struct Palette {
     colours: Box<[[u8; 3]]>,
-    components: Box<[[f32; 3]]>,
+    components: Option<Box<[[f32; 3]]>>,
+    exact_colours: Option<Box<[u64]>>,
     colour_space: ColourSpace,
     matching_mode: PaletteMatchMode,
 }
@@ -282,6 +296,100 @@ impl Palette {
         }
 
         Ok(Self::from_colours(colours))
+    }
+
+    /// Derives a palette from the visible colours in `source`.
+    ///
+    /// [`PaletteSize::All`] retains distinct colours in first-seen order.
+    /// [`PaletteSize::Limited`] uses deterministic frequency-weighted median
+    /// cut and selects representatives that occur in the source. Pixels with
+    /// zero alpha are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when the requested limit is zero
+    /// or the source has no visible pixels.
+    pub fn from_source(source: &SourceImage, size: PaletteSize) -> Result<Self> {
+        if size == PaletteSize::Limited(0) {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "derived palette size must be greater than zero",
+            ));
+        }
+        if size == PaletteSize::All {
+            return Self::from_all_source_colours(source);
+        }
+
+        let mut indices = HashMap::<[u8; 3], usize>::new();
+        let mut colours = Vec::<SourceColour>::new();
+        for (order, pixel) in source.rgba8_bytes().as_chunks::<4>().0.iter().enumerate() {
+            if pixel[3] == 0 {
+                continue;
+            }
+            let colour = [pixel[0], pixel[1], pixel[2]];
+            if let Some(&index) = indices.get(&colour) {
+                colours[index].count += 1;
+            } else {
+                indices.insert(colour, colours.len());
+                colours.push(SourceColour {
+                    colour,
+                    count: 1,
+                    order,
+                });
+            }
+        }
+
+        if colours.is_empty() {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "cannot derive a palette from a source with no visible pixels",
+            ));
+        }
+        let PaletteSize::Limited(limit) = size else {
+            unreachable!("PaletteSize::All returns above")
+        };
+        let colours = if colours.len() > limit {
+            reduce_colours(colours, limit)
+        } else {
+            colours.into_iter().map(|entry| entry.colour).collect()
+        };
+        Ok(Self::from_colours(colours))
+    }
+
+    fn from_all_source_colours(source: &SourceImage) -> Result<Self> {
+        const RGB_COLOURS: usize = 1 << 24;
+        const BITS_PER_WORD: usize = u64::BITS as usize;
+
+        let mut seen = vec![0_u64; RGB_COLOURS / BITS_PER_WORD];
+        let mut colours = Vec::new();
+        for pixel in source.rgba8_bytes().as_chunks::<4>().0 {
+            if pixel[3] == 0 {
+                continue;
+            }
+            let colour = [pixel[0], pixel[1], pixel[2]];
+            let index =
+                usize::from(pixel[0]) << 16 | usize::from(pixel[1]) << 8 | usize::from(pixel[2]);
+            let word = &mut seen[index / BITS_PER_WORD];
+            let bit = 1_u64 << (index % BITS_PER_WORD);
+            if *word & bit == 0 {
+                *word |= bit;
+                colours.push(colour);
+            }
+        }
+
+        if colours.is_empty() {
+            return Err(DitherError::new(
+                ErrorKind::InvalidParameter,
+                "cannot derive a palette from a source with no visible pixels",
+            ));
+        }
+        Ok(Self {
+            colours: colours.into_boxed_slice(),
+            components: None,
+            exact_colours: Some(seen.into_boxed_slice()),
+            colour_space: ColourSpace::Rgb,
+            matching_mode: PaletteMatchMode::Colour,
+        })
     }
 
     /// Creates a palette containing black, white, and one RGB colour.
@@ -371,13 +479,10 @@ impl Palette {
     }
 
     fn from_colours(colours: Box<[[u8; 3]]>) -> Self {
-        let components = colours
-            .iter()
-            .map(|colour| colour_components(*colour, ColourSpace::Rgb))
-            .collect();
         Self {
             colours,
-            components,
+            components: None,
+            exact_colours: None,
             colour_space: ColourSpace::Rgb,
             matching_mode: PaletteMatchMode::Colour,
         }
@@ -386,11 +491,7 @@ impl Palette {
     /// Selects the colour space used for palette matching.
     pub fn with_colour_space(mut self, colour_space: ColourSpace) -> Self {
         self.colour_space = colour_space;
-        self.components = self
-            .colours
-            .iter()
-            .map(|colour| colour_components(*colour, colour_space))
-            .collect();
+        self.cache_components();
         self
     }
 
@@ -400,8 +501,11 @@ impl Palette {
     }
 
     /// Selects full-colour or luminance-only palette matching.
-    pub const fn with_matching_mode(mut self, matching_mode: PaletteMatchMode) -> Self {
+    pub fn with_matching_mode(mut self, matching_mode: PaletteMatchMode) -> Self {
         self.matching_mode = matching_mode;
+        if matching_mode != PaletteMatchMode::Colour {
+            self.cache_components();
+        }
         self
     }
 
@@ -440,6 +544,9 @@ impl Palette {
             return [if sum >= 383 { 255 } else { 0 }; 3];
         }
         if self.colour_space == ColourSpace::Rgb && self.matching_mode == PaletteMatchMode::Colour {
+            if self.contains_exact(colour) {
+                return colour;
+            }
             return *self
                 .colours
                 .iter()
@@ -450,10 +557,14 @@ impl Palette {
     }
 
     fn nearest_transformed(&self, colour: [f32; 3]) -> [u8; 3] {
+        let components = self
+            .components
+            .as_ref()
+            .expect("transformed matching always caches palette components");
         *self
             .colours
             .iter()
-            .zip(&self.components)
+            .zip(components)
             .min_by(|(_, left), (_, right)| {
                 let left = match_distance(colour, **left, self.colour_space, self.matching_mode);
                 let right = match_distance(colour, **right, self.colour_space, self.matching_mode);
@@ -462,6 +573,118 @@ impl Palette {
             .expect("a palette is always non-empty")
             .0
     }
+
+    fn cache_components(&mut self) {
+        self.components = Some(
+            self.colours
+                .iter()
+                .map(|colour| colour_components(*colour, self.colour_space))
+                .collect(),
+        );
+    }
+
+    fn contains_exact(&self, colour: [u8; 3]) -> bool {
+        const BITS_PER_WORD: usize = u64::BITS as usize;
+
+        let Some(exact_colours) = &self.exact_colours else {
+            return false;
+        };
+        let index =
+            usize::from(colour[0]) << 16 | usize::from(colour[1]) << 8 | usize::from(colour[2]);
+        exact_colours[index / BITS_PER_WORD] & (1_u64 << (index % BITS_PER_WORD)) != 0
+    }
+}
+
+struct SourceColour {
+    colour: [u8; 3],
+    count: u64,
+    order: usize,
+}
+
+/// Reduces source colours with frequency-weighted median cut.
+fn reduce_colours(colours: Vec<SourceColour>, limit: usize) -> Box<[[u8; 3]]> {
+    let mut buckets = vec![colours];
+    while buckets.len() < limit {
+        let Some((index, _)) = buckets
+            .iter()
+            .enumerate()
+            .filter(|(_, bucket)| bucket.len() > 1)
+            .map(|(index, bucket)| {
+                let (range, _) = widest_channel(bucket);
+                let population = bucket.iter().map(|entry| entry.count).sum::<u64>();
+                (index, (range, population))
+            })
+            .max_by_key(|(_, score)| *score)
+        else {
+            break;
+        };
+        let mut bucket = buckets.remove(index);
+        let (_, channel) = widest_channel(&bucket);
+        bucket.sort_by_key(|entry| (entry.colour[channel], entry.colour, entry.order));
+        let total = bucket.iter().map(|entry| entry.count).sum::<u64>();
+        let mut population = 0;
+        let mut best = (1, u64::MAX);
+        for split in 1..bucket.len() {
+            population += bucket[split - 1].count;
+            let imbalance = population.abs_diff(total - population);
+            if imbalance < best.1 {
+                best = (split, imbalance);
+            }
+        }
+        let split = best.0;
+        let right = bucket.split_off(split);
+        buckets.insert(index, bucket);
+        buckets.push(right);
+    }
+
+    let mut representatives = buckets
+        .iter()
+        .map(|bucket| {
+            let total = bucket
+                .iter()
+                .map(|entry| u128::from(entry.count))
+                .sum::<u128>();
+            let sums: [u128; 3] = std::array::from_fn(|channel| {
+                bucket
+                    .iter()
+                    .map(|entry| u128::from(entry.colour[channel]) * u128::from(entry.count))
+                    .sum::<u128>()
+            });
+            bucket
+                .iter()
+                .min_by_key(|entry| {
+                    let distance = (0..3)
+                        .map(|channel| {
+                            let value = u128::from(entry.colour[channel]) * total;
+                            value.abs_diff(sums[channel]).pow(2)
+                        })
+                        .sum::<u128>();
+                    (distance, u64::MAX - entry.count, entry.order)
+                })
+                .map(|entry| (entry.order, entry.colour))
+                .expect("median-cut buckets are non-empty")
+        })
+        .collect::<Vec<_>>();
+    representatives.sort_by_key(|(order, _)| *order);
+    representatives
+        .into_iter()
+        .map(|(_, colour)| colour)
+        .collect()
+}
+
+fn widest_channel(colours: &[SourceColour]) -> (u8, usize) {
+    (0..3)
+        .map(|channel| {
+            let (minimum, maximum) = colours
+                .iter()
+                .map(|entry| entry.colour[channel])
+                .fold((u8::MAX, u8::MIN), |(minimum, maximum), value| {
+                    (minimum.min(value), maximum.max(value))
+                });
+            (maximum - minimum, channel)
+        })
+        .max_by_key(|&(range, channel)| (range, usize::MAX - channel))
+        .expect("colours have three channels")
 }
 
 /// Deterministically maps each selected pixel to its nearest palette colour.
@@ -2809,8 +3032,8 @@ mod tests {
         CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
         DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
         ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
-        OrderedDither, Palette, PaletteMatchMode, Threshold, ThresholdMap, ThresholdRotation,
-        blue_noise, cmyk_to_rgb, colour_components, rgb_to_cmyk,
+        OrderedDither, Palette, PaletteMatchMode, PaletteSize, Threshold, ThresholdMap,
+        ThresholdRotation, blue_noise, cmyk_to_rgb, colour_components, rgb_to_cmyk,
     };
     use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -3167,6 +3390,88 @@ mod tests {
         assert_eq!(
             Palette::black_and_white().matching_mode(),
             PaletteMatchMode::Colour
+        );
+    }
+
+    #[test]
+    fn derives_every_visible_source_colour_in_first_seen_order() {
+        let source = source(
+            7,
+            1,
+            &[
+                [10, 20, 30, 255],
+                [40, 50, 60, 128],
+                [10, 20, 30, 64],
+                [70, 80, 90, 0],
+                [100, 110, 120, 1],
+                [40, 50, 60, 255],
+                [100, 110, 120, 255],
+            ],
+        );
+        let palette = Palette::from_source(&source, PaletteSize::All).unwrap();
+
+        assert_eq!(
+            palette.colours(),
+            &[[10, 20, 30], [40, 50, 60], [100, 110, 120]]
+        );
+        assert_eq!(palette.nearest_colour([40, 50, 60]), [40, 50, 60]);
+        assert!(palette.components.is_none());
+        assert!(palette.exact_colours.is_some());
+        assert_eq!(PaletteSize::default(), PaletteSize::All);
+    }
+
+    #[test]
+    fn caches_palette_components_only_for_transformed_matching() {
+        let rgb = Palette::new([[10, 20, 30], [40, 50, 60]]).unwrap();
+        assert!(rgb.components.is_none());
+
+        let perceptual = rgb.with_colour_space(ColourSpace::Oklab);
+        assert!(perceptual.components.is_some());
+        let luminance = Palette::black_and_white().with_matching_mode(PaletteMatchMode::Luminance);
+        assert!(luminance.components.is_some());
+    }
+
+    #[test]
+    fn derives_a_limited_deterministic_palette_from_source_colours() {
+        let mut pixels = Vec::new();
+        pixels.extend([[240, 20, 20, 255]; 12]);
+        pixels.extend([[180, 10, 10, 255]; 3]);
+        pixels.extend([[20, 20, 240, 255]; 10]);
+        pixels.extend([[10, 10, 170, 255]; 2]);
+        pixels.push([20, 220, 20, 255]);
+        let source = source(pixels.len() as u32, 1, &pixels);
+
+        let first = Palette::from_source(&source, PaletteSize::Limited(2)).unwrap();
+        let second = Palette::from_source(&source, PaletteSize::Limited(2)).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.colours(), &[[240, 20, 20], [20, 20, 240]]);
+        assert!(
+            first
+                .colours()
+                .iter()
+                .all(|colour| { pixels.iter().any(|pixel| pixel[..3] == colour[..]) })
+        );
+
+        let all = Palette::from_source(&source, PaletteSize::All).unwrap();
+        let oversized = Palette::from_source(&source, PaletteSize::Limited(99)).unwrap();
+        assert_eq!(oversized, all);
+    }
+
+    #[test]
+    fn rejects_empty_derived_palettes_and_zero_limits() {
+        let visible = source(1, 1, &[[1, 2, 3, 255]]);
+        assert_eq!(
+            Palette::from_source(&visible, PaletteSize::Limited(0))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidParameter
+        );
+        let transparent = source(2, 1, &[[1, 2, 3, 0], [4, 5, 6, 0]]);
+        assert_eq!(
+            Palette::from_source(&transparent, PaletteSize::All)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidParameter
         );
     }
 

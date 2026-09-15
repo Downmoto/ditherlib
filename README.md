@@ -24,6 +24,7 @@ re-render pipelines.
 - Built-in 16x16 blue-noise threshold map
 - Custom rectangular threshold maps with strength, offset, rotation, and mirroring
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
+- Palette derivation from source-image colours with an optional size limit
 - RGB, linear RGB, and Oklab palette matching with luminance-only control
 - Configurable logical pixel sizes for every dithering method
 - Whole-image and polygon selections with anti-aliased edges
@@ -225,6 +226,24 @@ fn main() -> ditherlib::Result<()> {
         Colour::WHITE,
     ])?;
     assert_eq!(palette.colours().len(), 3);
+    Ok(())
+}
+```
+
+Palettes can also be derived from the visible pixels in a source image.
+`PaletteSize::All` retains every distinct colour in first-seen order.
+`PaletteSize::Limited(n)` applies deterministic, frequency-weighted median cut
+and chooses representatives that occur in the source. Fully transparent pixels
+do not contribute colours.
+
+```rust,no_run
+use ditherlib::{Palette, PaletteSize, Threshold, read};
+
+fn main() -> ditherlib::Result<()> {
+    let source = read("input.png")?;
+    let palette = Palette::from_source(&source, PaletteSize::Limited(16))?;
+    let effect = Threshold::new(palette);
+    assert!(effect.palette().colours().len() <= 16);
     Ok(())
 }
 ```

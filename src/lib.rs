@@ -14,7 +14,7 @@ pub use effects::{
     ColourHalftoneMode, ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel,
     DiffusionScan, DiffusionTap, DotShape, ErrorDiffusion, Greyscale, Halftone, HalftoneChannel,
     HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, PaletteMatchMode,
-    Threshold, ThresholdMap, ThresholdRotation,
+    PaletteSize, Threshold, ThresholdMap, ThresholdRotation,
 };
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};

@@ -8,6 +8,6 @@ pub use dither::{
     ColourHalftoneMode, ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel,
     DiffusionScan, DiffusionTap, DotShape, ErrorDiffusion, Halftone, HalftoneChannel,
     HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, PaletteMatchMode,
-    Threshold, ThresholdMap, ThresholdRotation,
+    PaletteSize, Threshold, ThresholdMap, ThresholdRotation,
 };
 pub use greyscale::Greyscale;

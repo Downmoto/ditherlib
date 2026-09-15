@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1
+
+### Added
+
+- Added deterministic palette derivation from every visible source colour or
+  a limited set of frequency-weighted median-cut representatives.
+
 ## 0.8.0
 
 ### Added
