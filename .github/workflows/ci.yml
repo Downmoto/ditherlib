@@ -8,15 +8,15 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  checks:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build
-        run: cargo build --verbose
+      - uses: actions/checkout@v7
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -27,5 +27,28 @@ jobs:
       - name: Test
         run: cargo test
 
+      - name: Test without default features
+        run: cargo test --no-default-features
+
+      - name: Test all features
+        run: cargo test --all-features
+
       - name: Test examples
         run: cargo test --examples
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
+
+      - name: Check package
+        run: cargo package --locked
+
+  msrv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Check minimum supported Rust version
+        run: cargo check --all-targets --all-features --locked
