@@ -1,9 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{
-    DiffusionAlgorithm, DitherError, ErrorDiffusion, ErrorKind, Palette, Pipeline, Point, Polygon,
-    RenderedImage, Renderer, Selection, SourceImage, read, write,
-};
+use ditherlib::prelude::*;
 
 const COMPARISONS: [[DiffusionAlgorithm; 2]; 7] = [
     [

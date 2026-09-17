@@ -135,7 +135,7 @@ const STEVENSON_ARCE: &[DiffusionTap] = &[
 const TWO_DIMENSIONAL_KNUTH: &[DiffusionTap] =
     &[DiffusionTap::new(1, 0, 1), DiffusionTap::new(0, 1, 1)];
 
-/// An RGB colour with 8-bit channels.
+/// A weighted destination in an error-diffusion kernel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiffusionTap {
     offset_x: i32,

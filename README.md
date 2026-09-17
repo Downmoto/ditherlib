@@ -1,14 +1,14 @@
 # Ditherlib
 
 Ditherlib is a Rust library for non-destructive image effects and dithering.
-Effects can target an entire image or anti-aliased polygon selections, and an
-ordered pipeline can combine several selected effects into one render.
+Effects can target an entire image, an anti-aliased polygon, or a custom mask,
+and an ordered pipeline can combine several selected effects into one render.
 
 Source pixels remain immutable after loading. Each render starts from the
 source and produces a separately owned image, so callers can freely edit and
 re-render pipelines.
 
-![samurai](assets/samurai_showcase.jpg "showcase")
+![samurai](https://raw.githubusercontent.com/Downmoto/ditherlib/master/assets/samurai_showcase.jpg "showcase")
 
 ## Features
 
@@ -29,7 +29,7 @@ re-render pipelines.
 - Palette derivation from source-image colours with an optional size limit
 - RGB, linear RGB, and Oklab palette matching with luminance-only control
 - Rectangular logical pixels with grid offsets and five sampling modes
-- Whole-image and polygon selections with anti-aliased edges
+- Whole-image, polygon, and custom-mask selections with anti-aliased edges
 - Ordered multi-effect pipelines with reusable rendering buffers
 - Crate-owned image, result, and error types
 
@@ -62,10 +62,7 @@ This example converts the full image to greyscale, then applies a red
 monochrome ordered dither inside a polygon:
 
 ```rust,no_run
-use ditherlib::{
-    Greyscale, OrderedDither, Palette, Pipeline, Point, Polygon, Renderer, 
-    Colour, Selection, ThresholdMap, read, write,
-};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.jpg")?;
@@ -73,7 +70,7 @@ fn main() -> ditherlib::Result<()> {
     let height = source.height() as f32;
 
     let centre = Point::new(width * 0.5, height * 0.5);
-    let area = Polygon::centered_square(centre, width / 1.50)?;
+    let area = Polygon::centred_square(centre, width / 1.50)?;
 
     let mut pipeline = Pipeline::new();
     pipeline.add(Greyscale, Selection::All);
@@ -102,7 +99,7 @@ share the same logical pixel controls. Width and height use image pixels, and
 signed grid offsets move the grid right and down for positive values.
 
 ```rust
-use ditherlib::{Palette, SamplingMode, Threshold};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let effect = Threshold::new(Palette::pico_8())
@@ -136,7 +133,7 @@ at the image origin and support the same strength, offset, rotation, and
 mirroring controls as Bayer and custom maps.
 
 ```rust
-use ditherlib::{OrderedDither, Palette, ThresholdMap, ThresholdRotation};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let map = ThresholdMap::new(3, 2, [0, 3, 1, 4, 2, 5])?;
@@ -162,7 +159,7 @@ dithering. Its samples are driven by image-origin logical pixel coordinates
 and the seed, so rendering a polygon selection does not shift the noise field.
 
 ```rust
-use ditherlib::{NoiseAlgorithm, NoiseDither, Palette};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let effect = NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::Blue)
@@ -184,7 +181,7 @@ Cell dimensions and phase use image pixels, while angles use clockwise radians.
 The screen remains anchored to the image origin when used with a selection.
 
 ```rust
-use ditherlib::{Colour, Halftone, HalftoneShape, Palette};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let effect = Halftone::new(Palette::monochrome(Colour::RED), HalftoneShape::Ellipse)
@@ -209,10 +206,7 @@ uses under-colour removal to separate cyan, magenta, yellow, and black inks,
 screens each ink, then recombines the subtractive channels into RGB output.
 
 ```rust
-use ditherlib::{
-    CmykScreenPreset, ColourHalftone, ColourHalftoneMode, HalftoneChannel,
-    HalftoneShape,
-};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let effect = ColourHalftone::new(ColourHalftoneMode::Cmyk, HalftoneShape::Circle)
@@ -247,7 +241,7 @@ and conversions to and from `[u8; 3]`. `Color` is an alias for callers using
 American spelling. `Palette::new` accepts either representation:
 
 ```rust
-use ditherlib::{Colour, Palette};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let palette = Palette::new([
@@ -267,7 +261,7 @@ and chooses representatives that occur in the source. Fully transparent pixels
 do not contribute colours.
 
 ```rust,no_run
-use ditherlib::{Palette, PaletteSize, Threshold, read};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.png")?;
@@ -287,7 +281,7 @@ and opponent colour components. Every palette-based effect uses the palette's
 configured space.
 
 ```rust
-use ditherlib::{ColourSpace, Palette, PaletteMatchMode};
+use ditherlib::prelude::*;
 
 let palette = Palette::pico_8()
     .with_colour_space(ColourSpace::Oklab)
@@ -304,9 +298,7 @@ space. Independent-channel diffusion is the default. Luminance mode propagates
 brightness error while leaving chroma error local:
 
 ```rust
-use ditherlib::{
-    ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, ErrorDiffusion, Palette,
-};
+use ditherlib::prelude::*;
 
 let effect = ErrorDiffusion::new(
     Palette::pico_8().with_colour_space(ColourSpace::Oklab),
@@ -327,10 +319,7 @@ supports raster or serpentine scanning, diffusion strength from `0.0` through
 `2.0`, and optional per-channel error clamping.
 
 ```rust,no_run
-use ditherlib::{
-    DiffusionAlgorithm, DiffusionScan, ErrorDiffusion, Palette, Renderer,
-    Selection, read, write,
-};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.png")?;
@@ -345,7 +334,7 @@ fn main() -> ditherlib::Result<()> {
 Custom kernels contain forward-pointing weighted taps and a divisor:
 
 ```rust
-use ditherlib::{DiffusionKernel, DiffusionTap, ErrorDiffusion, Palette};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let kernel = DiffusionKernel::new(
@@ -393,7 +382,7 @@ coefficient table comes from Appendix I of
 Rolling source and error rows keep working memory proportional to image width.
 
 ```rust,no_run
-use ditherlib::{OstromoukhovDither, Palette, Renderer, Selection, read, write};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.png")?;
@@ -414,7 +403,7 @@ retained error equally, while larger values suppress older errors more
 strongly.
 
 ```rust,no_run
-use ditherlib::{Palette, Renderer, RiemersmaDither, Selection, read, write};
+use ditherlib::prelude::*;
 
 fn main() -> ditherlib::Result<()> {
     let source = read("input.png")?;

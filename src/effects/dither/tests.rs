@@ -1,15 +1,20 @@
 use super::{
-    CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
-    DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
-    ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
-    OrderedDither, OstromoukhovDither, Palette, PaletteMatchMode, PaletteSize, RiemersmaDither,
-    SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
     cells::sample_cell,
-    colour::colour_components,
-    halftone::{cmyk_to_rgb, rgb_to_cmyk},
-    noise::blue_noise,
-    ostromoukhov::published_coefficients,
-    riemersma::hilbert_cells,
+    colour::{Color, Colour, ColourSpace, colour_components},
+    diffusion::{
+        DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
+        ErrorDiffusion,
+    },
+    halftone::{
+        CmykScreenPreset, ColourHalftone, ColourHalftoneMode, Halftone, HalftoneChannel,
+        HalftoneShape, cmyk_to_rgb, rgb_to_cmyk,
+    },
+    noise::{NoiseAlgorithm, NoiseDither, blue_noise},
+    ostromoukhov::{OstromoukhovDither, published_coefficients},
+    palette::{Palette, PaletteMatchMode, PaletteSize},
+    riemersma::{RiemersmaDither, hilbert_cells},
+    sampling::SamplingMode,
+    threshold::{OrderedDither, Threshold, ThresholdMap, ThresholdRotation},
 };
 use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 

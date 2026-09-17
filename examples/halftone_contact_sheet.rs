@@ -1,6 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{Halftone, HalftoneShape, Palette, Renderer, Selection, read};
+use ditherlib::prelude::*;
 use image::{Rgba, RgbaImage, imageops::FilterType};
 
 const COLUMNS: u32 = 3;

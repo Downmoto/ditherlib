@@ -1,9 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{
-    DiffusionAlgorithm, DiffusionScan, DitherError, ErrorDiffusion, ErrorKind, Palette, Pipeline,
-    Point, Polygon, RenderedImage, Renderer, Selection, SourceImage, read, write,
-};
+use ditherlib::prelude::*;
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);

@@ -7,13 +7,21 @@ pub struct PipelineStep {
 }
 
 impl PipelineStep {
+    /// Creates a pipeline step from an effect and selection.
+    pub fn new(effect: impl Effect + 'static, selection: Selection) -> Self {
+        Self {
+            effect: Box::new(effect),
+            selection,
+        }
+    }
+
     /// Returns the selection used by this step.
     pub const fn selection(&self) -> &Selection {
         &self.selection
     }
 
     /// Returns the effect used by this step.
-    pub(crate) fn effect(&self) -> &dyn Effect {
+    pub fn effect(&self) -> &dyn Effect {
         self.effect.as_ref()
     }
 }
@@ -46,10 +54,7 @@ impl Pipeline {
 
     /// Appends an effect and selection to the pipeline.
     pub fn add(&mut self, effect: impl Effect + 'static, selection: Selection) {
-        self.steps.push(PipelineStep {
-            effect: Box::new(effect),
-            selection,
-        });
+        self.steps.push(PipelineStep::new(effect, selection));
     }
 
     /// Inserts a previously removed step at `index`.
@@ -104,7 +109,7 @@ impl Pipeline {
 
 #[cfg(test)]
 mod tests {
-    use super::Pipeline;
+    use super::{Pipeline, PipelineStep};
     use crate::{Effect, ErrorKind, Mask, Result, Selection};
 
     struct Noop;
@@ -136,6 +141,26 @@ mod tests {
         pipeline.insert(0, removed).unwrap();
         pipeline.move_step(0, 1).unwrap();
         assert_eq!(pipeline.len(), 2);
+    }
+
+    #[test]
+    fn constructs_steps_and_exposes_their_effects() {
+        let step = PipelineStep::new(Noop, Selection::All);
+        let mask = Mask::new(1, 1, vec![255]).unwrap();
+
+        assert!(matches!(step.selection(), Selection::All));
+        assert!(
+            step.effect()
+                .apply(&[0; 4], &mut [0; 4], (1, 1), &mask)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn pipelines_are_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<Pipeline>();
     }
 
     #[test]
