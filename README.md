@@ -447,3 +447,9 @@ cargo run --release --example comparison -- input.jpg output
 ```
 
 See the [`examples`](./examples/) directory for the complete source.
+
+## Benchmarks
+
+The Criterion suite covers every effect and configuration family across
+deterministic in-memory fixtures. See [BENCHMARKS.md](BENCHMARKS.md) for the
+complete matrix, measurement boundaries, and baseline workflow.
