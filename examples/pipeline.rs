@@ -27,7 +27,7 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     pipeline.add(Blur::new(2.0)?, Selection::All);
     pipeline.add(
         OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_4x4())
-            .with_pixel_size(4)?,
+            .with_pixel_size(4, 4)?,
         Selection::All,
     );
 

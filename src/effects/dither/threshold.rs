@@ -1,4 +1,4 @@
-use super::cells::{quantise_cells, validate_pixel_size};
+use super::cells::{PixelGrid, SamplingMode, quantise_cells};
 use super::noise::{BLUE_NOISE_16X16, BLUE_NOISE_SIZE};
 use super::palette::Palette;
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
@@ -9,7 +9,7 @@ const THRESHOLD_STRENGTH_SCALE: u16 = 256;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Threshold {
     palette: Palette,
-    pixel_size: u32,
+    grid: PixelGrid,
 }
 
 impl Threshold {
@@ -17,7 +17,7 @@ impl Threshold {
     pub const fn new(palette: Palette) -> Self {
         Self {
             palette,
-            pixel_size: 1,
+            grid: PixelGrid::new(),
         }
     }
 
@@ -26,19 +26,71 @@ impl Threshold {
         &self.palette
     }
 
-    /// Sets the width and height of each square logical pixel.
+    /// Sets the logical pixel width.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
-    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
-        self.pixel_size = validate_pixel_size(pixel_size)?;
+    /// Returns [`ErrorKind::InvalidParameter`] when `width` is zero.
+    pub fn with_pixel_width(mut self, width: u32) -> Result<Self> {
+        self.grid = self.grid.with_width(width)?;
         Ok(self)
     }
 
-    /// Returns the width and height of each square logical pixel.
-    pub const fn pixel_size(&self) -> u32 {
-        self.pixel_size
+    /// Returns the logical pixel width.
+    pub const fn pixel_width(&self) -> u32 {
+        self.grid.width()
+    }
+
+    /// Sets the logical pixel height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `height` is zero.
+    pub fn with_pixel_height(mut self, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_height(height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel height.
+    pub const fn pixel_height(&self) -> u32 {
+        self.grid.height()
+    }
+
+    /// Sets the logical pixel width and height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when either dimension is zero.
+    pub fn with_pixel_size(mut self, width: u32, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_size(width, height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel dimensions as `(width, height)`.
+    pub const fn pixel_size(&self) -> (u32, u32) {
+        self.grid.size()
+    }
+
+    /// Offsets the logical pixel grid in image pixels.
+    pub const fn with_grid_offset(mut self, x: i32, y: i32) -> Self {
+        self.grid = self.grid.with_offset(x, y);
+        self
+    }
+
+    /// Returns the logical pixel grid offset as `(x, y)` image pixels.
+    pub const fn grid_offset(&self) -> (i32, i32) {
+        self.grid.offset()
+    }
+
+    /// Selects the source-colour sampling used for each logical pixel.
+    pub const fn with_sampling(mut self, sampling: SamplingMode) -> Self {
+        self.grid = self.grid.with_sampling(sampling);
+        self
+    }
+
+    /// Returns the source-colour sampling mode.
+    pub const fn sampling(&self) -> SamplingMode {
+        self.grid.sampling()
     }
 }
 
@@ -55,7 +107,7 @@ impl Effect for Threshold {
             output,
             dimensions,
             mask,
-            self.pixel_size,
+            self.grid,
             |colour, _, _| self.palette.nearest_colour(colour),
         );
         Ok(())
@@ -268,7 +320,7 @@ pub enum ThresholdRotation {
 pub struct OrderedDither {
     palette: Palette,
     map: ThresholdMap,
-    pixel_size: u32,
+    grid: PixelGrid,
     strength: u16,
     offset: (i32, i32),
     rotation: ThresholdRotation,
@@ -282,7 +334,7 @@ impl OrderedDither {
         Self {
             palette,
             map,
-            pixel_size: 1,
+            grid: PixelGrid::new(),
             strength: THRESHOLD_STRENGTH_SCALE,
             offset: (0, 0),
             rotation: ThresholdRotation::None,
@@ -301,19 +353,71 @@ impl OrderedDither {
         &self.map
     }
 
-    /// Sets the width and height of each square logical pixel.
+    /// Sets the logical pixel width.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
-    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
-        self.pixel_size = validate_pixel_size(pixel_size)?;
+    /// Returns [`ErrorKind::InvalidParameter`] when `width` is zero.
+    pub fn with_pixel_width(mut self, width: u32) -> Result<Self> {
+        self.grid = self.grid.with_width(width)?;
         Ok(self)
     }
 
-    /// Returns the width and height of each square logical pixel.
-    pub const fn pixel_size(&self) -> u32 {
-        self.pixel_size
+    /// Returns the logical pixel width.
+    pub const fn pixel_width(&self) -> u32 {
+        self.grid.width()
+    }
+
+    /// Sets the logical pixel height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `height` is zero.
+    pub fn with_pixel_height(mut self, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_height(height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel height.
+    pub const fn pixel_height(&self) -> u32 {
+        self.grid.height()
+    }
+
+    /// Sets the logical pixel width and height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when either dimension is zero.
+    pub fn with_pixel_size(mut self, width: u32, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_size(width, height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel dimensions as `(width, height)`.
+    pub const fn pixel_size(&self) -> (u32, u32) {
+        self.grid.size()
+    }
+
+    /// Offsets the logical pixel grid in image pixels.
+    pub const fn with_grid_offset(mut self, x: i32, y: i32) -> Self {
+        self.grid = self.grid.with_offset(x, y);
+        self
+    }
+
+    /// Returns the logical pixel grid offset as `(x, y)` image pixels.
+    pub const fn grid_offset(&self) -> (i32, i32) {
+        self.grid.offset()
+    }
+
+    /// Selects the source-colour sampling used for each logical pixel.
+    pub const fn with_sampling(mut self, sampling: SamplingMode) -> Self {
+        self.grid = self.grid.with_sampling(sampling);
+        self
+    }
+
+    /// Returns the source-colour sampling mode.
+    pub const fn sampling(&self) -> SamplingMode {
+        self.grid.sampling()
     }
 
     /// Sets the strength of the threshold adjustment.
@@ -448,9 +552,11 @@ impl Effect for OrderedDither {
                 output,
                 dimensions,
                 mask,
-                self.pixel_size,
+                self.grid,
                 |colour, x, y| {
-                    let adjustment = adjustments[((y % size) * size + x % size) as usize];
+                    let x = x.rem_euclid(i64::from(size)) as usize;
+                    let y = y.rem_euclid(i64::from(size)) as usize;
+                    let adjustment = adjustments[y * size as usize + x];
                     let colour =
                         colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
                     self.palette.nearest_colour(colour)
@@ -479,9 +585,11 @@ impl Effect for OrderedDither {
                 output,
                 dimensions,
                 mask,
-                self.pixel_size,
+                self.grid,
                 |colour, x, y| {
-                    let adjustment = adjustments[((y % height) * width + x % width) as usize];
+                    let x = x.rem_euclid(i64::from(width)) as usize;
+                    let y = y.rem_euclid(i64::from(height)) as usize;
+                    let adjustment = adjustments[y * width as usize + x];
                     let colour =
                         colour.map(|channel| (i32::from(channel) + adjustment).clamp(0, 255) as u8);
                     self.palette.nearest_colour(colour)
@@ -494,10 +602,10 @@ impl Effect for OrderedDither {
             output,
             dimensions,
             mask,
-            self.pixel_size,
+            self.grid,
             |colour, x, y| {
-                let x = x % width;
-                let y = y % height;
+                let x = x.rem_euclid(i64::from(width)) as u32;
+                let y = y.rem_euclid(i64::from(height)) as u32;
                 let x = if x >= offset_x {
                     x - offset_x
                 } else {

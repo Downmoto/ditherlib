@@ -25,7 +25,7 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
         Palette::monochrome([200, 30, 30]),
         ThresholdMap::bayer_4x4(),
     )
-    .with_pixel_size(4)?;
+    .with_pixel_size(4, 4)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write(output, &rendered)
 }

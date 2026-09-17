@@ -31,7 +31,7 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
         [255, 0, 255],
         [255, 255, 255],
     ])?;
-    let effect = Threshold::new(palette).with_pixel_size(8)?;
+    let effect = Threshold::new(palette).with_pixel_size(8, 8)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write(output, &rendered)
 }

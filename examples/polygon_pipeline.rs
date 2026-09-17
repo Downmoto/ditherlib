@@ -50,7 +50,7 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
     pipeline.add(Greyscale, Selection::Polygon(greyscale_area));
     pipeline.add(
         OrderedDither::new(Palette::monochrome([200, 0, 80]), ThresholdMap::bayer_4x4())
-            .with_pixel_size(4)?,
+            .with_pixel_size(4, 4)?,
         Selection::Polygon(dither_area),
     );
     pipeline.add(Blur::new(8.0)?, Selection::Polygon(blur_area));

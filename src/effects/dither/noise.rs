@@ -1,4 +1,4 @@
-use super::cells::{quantise_cells, validate_pixel_size};
+use super::cells::{PixelGrid, SamplingMode, quantise_cells};
 use super::palette::Palette;
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
 
@@ -40,7 +40,7 @@ pub enum NoiseAlgorithm {
 pub struct NoiseDither {
     palette: Palette,
     algorithm: NoiseAlgorithm,
-    pixel_size: u32,
+    grid: PixelGrid,
     seed: u64,
     strength: u16,
 }
@@ -51,7 +51,7 @@ impl NoiseDither {
         Self {
             palette,
             algorithm,
-            pixel_size: 1,
+            grid: PixelGrid::new(),
             seed: 0,
             strength: THRESHOLD_STRENGTH_SCALE,
         }
@@ -67,19 +67,71 @@ impl NoiseDither {
         self.algorithm
     }
 
-    /// Sets the width and height of each square logical pixel.
+    /// Sets the logical pixel width.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
-    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
-        self.pixel_size = validate_pixel_size(pixel_size)?;
+    /// Returns [`ErrorKind::InvalidParameter`] when `width` is zero.
+    pub fn with_pixel_width(mut self, width: u32) -> Result<Self> {
+        self.grid = self.grid.with_width(width)?;
         Ok(self)
     }
 
-    /// Returns the width and height of each square logical pixel.
-    pub const fn pixel_size(&self) -> u32 {
-        self.pixel_size
+    /// Returns the logical pixel width.
+    pub const fn pixel_width(&self) -> u32 {
+        self.grid.width()
+    }
+
+    /// Sets the logical pixel height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `height` is zero.
+    pub fn with_pixel_height(mut self, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_height(height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel height.
+    pub const fn pixel_height(&self) -> u32 {
+        self.grid.height()
+    }
+
+    /// Sets the logical pixel width and height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when either dimension is zero.
+    pub fn with_pixel_size(mut self, width: u32, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_size(width, height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel dimensions as `(width, height)`.
+    pub const fn pixel_size(&self) -> (u32, u32) {
+        self.grid.size()
+    }
+
+    /// Offsets the logical pixel grid in image pixels.
+    pub const fn with_grid_offset(mut self, x: i32, y: i32) -> Self {
+        self.grid = self.grid.with_offset(x, y);
+        self
+    }
+
+    /// Returns the logical pixel grid offset as `(x, y)` image pixels.
+    pub const fn grid_offset(&self) -> (i32, i32) {
+        self.grid.offset()
+    }
+
+    /// Selects the source-colour sampling used for each logical pixel.
+    pub const fn with_sampling(mut self, sampling: SamplingMode) -> Self {
+        self.grid = self.grid.with_sampling(sampling);
+        self
+    }
+
+    /// Returns the source-colour sampling mode.
+    pub const fn sampling(&self) -> SamplingMode {
+        self.grid.sampling()
     }
 
     /// Sets the deterministic noise seed.
@@ -132,11 +184,11 @@ impl Effect for NoiseDither {
             output,
             dimensions,
             mask,
-            self.pixel_size,
+            self.grid,
             |colour, x, y| {
                 let threshold = match self.algorithm {
                     NoiseAlgorithm::White => white_noise(x, y, self.seed),
-                    NoiseAlgorithm::Blue => blue_noise(x, y, self.seed),
+                    NoiseAlgorithm::Blue => blue_noise_signed(x, y, self.seed),
                 };
                 let adjustment = (i32::from(threshold) * 2 + 1 - 256) * 255 / 512;
                 let adjustment =
@@ -151,23 +203,30 @@ impl Effect for NoiseDither {
 }
 
 /// A weighted destination in an error-diffusion kernel.
-fn white_noise(x: u32, y: u32, seed: u64) -> u8 {
+fn white_noise(x: i64, y: i64, seed: u64) -> u8 {
     let value = seed
-        ^ u64::from(x).wrapping_mul(0x9e37_79b9_7f4a_7c15)
-        ^ u64::from(y).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        ^ (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (y as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     (mix64(value) >> 56) as u8
 }
 
 /// Samples seeded per-tile variants of the built-in blue-noise map.
+#[cfg(test)]
 pub(super) fn blue_noise(x: u32, y: u32, seed: u64) -> u8 {
-    let tile_x = x / BLUE_NOISE_SIZE;
-    let tile_y = y / BLUE_NOISE_SIZE;
+    blue_noise_signed(i64::from(x), i64::from(y), seed)
+}
+
+fn blue_noise_signed(x: i64, y: i64, seed: u64) -> u8 {
+    let size = i64::from(BLUE_NOISE_SIZE);
+    let tile_x = x.div_euclid(size);
+    let tile_y = y.div_euclid(size);
     let variation = mix64(
-        seed ^ u64::from(tile_x).wrapping_mul(0x9e37_79b9_7f4a_7c15)
-            ^ u64::from(tile_y).wrapping_mul(0xbf58_476d_1ce4_e5b9),
+        seed ^ (tile_x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            ^ (tile_y as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9),
     );
-    let mut x = (x % BLUE_NOISE_SIZE).wrapping_add(variation as u32) % BLUE_NOISE_SIZE;
-    let mut y = (y % BLUE_NOISE_SIZE).wrapping_add((variation >> 32) as u32) % BLUE_NOISE_SIZE;
+    let mut x = (x.rem_euclid(size) as u32).wrapping_add(variation as u32) % BLUE_NOISE_SIZE;
+    let mut y =
+        (y.rem_euclid(size) as u32).wrapping_add((variation >> 32) as u32) % BLUE_NOISE_SIZE;
     if variation & (1 << 8) != 0 {
         std::mem::swap(&mut x, &mut y);
     }

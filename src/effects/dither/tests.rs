@@ -2,8 +2,9 @@ use super::{
     CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
     DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
     ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
-    OrderedDither, Palette, PaletteMatchMode, PaletteSize, Threshold, ThresholdMap,
+    OrderedDither, Palette, PaletteMatchMode, PaletteSize, SamplingMode, Threshold, ThresholdMap,
     ThresholdRotation,
+    cells::sample_cell,
     colour::colour_components,
     halftone::{cmyk_to_rgb, rgb_to_cmyk},
     noise::blue_noise,
@@ -990,13 +991,13 @@ fn configures_noise_strength_and_pixel_size() {
         .with_seed(123)
         .with_strength(0.75)
         .unwrap()
-        .with_pixel_size(3)
+        .with_pixel_size(3, 3)
         .unwrap();
 
     assert_eq!(effect.algorithm(), NoiseAlgorithm::White);
     assert_eq!(effect.seed(), 123);
     assert_eq!(effect.strength(), 0.75);
-    assert_eq!(effect.pixel_size(), 3);
+    assert_eq!(effect.pixel_size(), (3, 3));
     for strength in [-0.1, 2.1, f32::NAN, f32::INFINITY] {
         assert_eq!(
             NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::White)
@@ -1008,7 +1009,7 @@ fn configures_noise_strength_and_pixel_size() {
     }
     assert_eq!(
         NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::White)
-            .with_pixel_size(0)
+            .with_pixel_size(0, 1)
             .unwrap_err()
             .kind(),
         ErrorKind::InvalidParameter
@@ -1414,27 +1415,30 @@ fn error_diffusion_is_repeatable() {
 
 #[test]
 fn validates_dither_pixel_sizes() {
-    assert_eq!(Threshold::new(Palette::black_and_white()).pixel_size(), 1);
+    assert_eq!(
+        Threshold::new(Palette::black_and_white()).pixel_size(),
+        (1, 1)
+    );
     assert_eq!(
         Threshold::new(Palette::black_and_white())
-            .with_pixel_size(3)
+            .with_pixel_size(3, 3)
             .unwrap()
             .pixel_size(),
-        3
+        (3, 3)
     );
 
     let errors = [
         Threshold::new(Palette::black_and_white())
-            .with_pixel_size(0)
+            .with_pixel_size(0, 1)
             .unwrap_err(),
         OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
-            .with_pixel_size(0)
+            .with_pixel_size(0, 1)
             .unwrap_err(),
         diffusion(DiffusionAlgorithm::FloydSteinberg)
-            .with_pixel_size(0)
+            .with_pixel_size(0, 1)
             .unwrap_err(),
         diffusion(DiffusionAlgorithm::Atkinson)
-            .with_pixel_size(0)
+            .with_pixel_size(0, 1)
             .unwrap_err(),
     ];
     assert!(
@@ -1442,6 +1446,233 @@ fn validates_dither_pixel_sizes() {
             .iter()
             .all(|error| error.kind() == ErrorKind::InvalidParameter)
     );
+}
+
+#[test]
+fn configures_rectangular_pixel_grids_and_sampling_for_every_dither() {
+    let threshold = Threshold::new(Palette::black_and_white())
+        .with_pixel_width(2)
+        .unwrap()
+        .with_pixel_height(3)
+        .unwrap()
+        .with_grid_offset(-1, 4)
+        .with_sampling(SamplingMode::Centre);
+    let ordered = OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
+        .with_pixel_size(2, 3)
+        .unwrap()
+        .with_grid_offset(-1, 4)
+        .with_sampling(SamplingMode::Darkest);
+    let noise = NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::White)
+        .with_pixel_size(2, 3)
+        .unwrap()
+        .with_grid_offset(-1, 4)
+        .with_sampling(SamplingMode::Lightest);
+    let configured_diffusion = diffusion(DiffusionAlgorithm::FloydSteinberg)
+        .with_pixel_size(2, 3)
+        .unwrap()
+        .with_grid_offset(-1, 4)
+        .with_sampling(SamplingMode::DominantColour);
+
+    assert_eq!(threshold.pixel_size(), (2, 3));
+    assert_eq!((threshold.pixel_width(), threshold.pixel_height()), (2, 3));
+    assert_eq!(threshold.grid_offset(), (-1, 4));
+    assert_eq!(threshold.sampling(), SamplingMode::Centre);
+    assert_eq!(ordered.pixel_size(), (2, 3));
+    assert_eq!(ordered.grid_offset(), (-1, 4));
+    assert_eq!(ordered.sampling(), SamplingMode::Darkest);
+    assert_eq!(noise.pixel_size(), (2, 3));
+    assert_eq!(noise.grid_offset(), (-1, 4));
+    assert_eq!(noise.sampling(), SamplingMode::Lightest);
+    assert_eq!(configured_diffusion.pixel_size(), (2, 3));
+    assert_eq!(configured_diffusion.grid_offset(), (-1, 4));
+    assert_eq!(
+        configured_diffusion.sampling(),
+        SamplingMode::DominantColour
+    );
+    assert_eq!(SamplingMode::default(), SamplingMode::Average);
+
+    for error in [
+        Threshold::new(Palette::black_and_white())
+            .with_pixel_height(0)
+            .unwrap_err(),
+        OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
+            .with_pixel_width(0)
+            .unwrap_err(),
+        NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::White)
+            .with_pixel_size(1, 0)
+            .unwrap_err(),
+        diffusion(DiffusionAlgorithm::FloydSteinberg)
+            .with_pixel_size(1, 0)
+            .unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), ErrorKind::InvalidParameter);
+    }
+}
+
+#[test]
+fn samples_average_centre_extrema_and_dominant_colour() {
+    let image = source(
+        3,
+        3,
+        &[
+            [200, 0, 0, 1],
+            [0, 0, 0, 2],
+            [200, 0, 0, 3],
+            [0, 0, 255, 4],
+            [0, 255, 0, 5],
+            [255, 255, 255, 6],
+            [255, 255, 0, 7],
+            [0, 255, 255, 8],
+            [255, 0, 255, 9],
+        ],
+    );
+    let mask = Selection::All.rasterise(3, 3).unwrap();
+    let sample =
+        |sampling| sample_cell(image.rgba8_bytes(), &mask, 3, (0, 0, 3, 3), sampling).unwrap();
+
+    assert_eq!(sample(SamplingMode::Average), [129, 113, 113]);
+    assert_eq!(sample(SamplingMode::Centre), [0, 255, 0]);
+    assert_eq!(sample(SamplingMode::Darkest), [0, 0, 0]);
+    assert_eq!(sample(SamplingMode::Lightest), [255, 255, 255]);
+    assert_eq!(sample(SamplingMode::DominantColour), [200, 0, 0]);
+}
+
+#[test]
+fn sampling_uses_only_the_covered_cell_intersection() {
+    let image = source(
+        4,
+        1,
+        &[
+            [255, 0, 0, 1],
+            [0, 0, 255, 2],
+            [255, 0, 0, 3],
+            [0, 255, 0, 4],
+        ],
+    );
+    let mask = Mask::new(4, 1, vec![64, 255, 191, 0]).unwrap();
+    let sample =
+        |sampling| sample_cell(image.rgba8_bytes(), &mask, 4, (0, 0, 4, 1), sampling).unwrap();
+
+    assert_eq!(sample(SamplingMode::Average), [128, 0, 128]);
+    assert_eq!(sample(SamplingMode::Centre), [255, 0, 0]);
+    assert_eq!(sample(SamplingMode::Darkest), [0, 0, 255]);
+    assert_eq!(sample(SamplingMode::Lightest), [255, 0, 0]);
+    assert_eq!(sample(SamplingMode::DominantColour), [255, 0, 0]);
+}
+
+#[test]
+fn grid_offsets_create_image_clipped_edge_cells() {
+    let pixels = (1..=7)
+        .map(|value| {
+            let value = value * 10;
+            [value, value, value, value]
+        })
+        .collect::<Vec<_>>();
+    let image = source(7, 1, &pixels);
+    let palette = Palette::new((1..=7).map(|value| [value * 10; 3]).collect::<Vec<_>>()).unwrap();
+    let effect = Threshold::new(palette)
+        .with_pixel_size(3, 1)
+        .unwrap()
+        .with_grid_offset(1, 0)
+        .with_sampling(SamplingMode::Centre);
+    let rendered = Renderer::new()
+        .render(&image, &effect, &Selection::All)
+        .unwrap();
+
+    assert_eq!(
+        rendered
+            .rgba8_bytes()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| pixel[0])
+            .collect::<Vec<_>>(),
+        [10, 30, 30, 30, 60, 60, 60]
+    );
+}
+
+#[test]
+fn every_dither_shares_sampling_for_partial_edges_and_polygon_intersections() {
+    let pixels = (0..35)
+        .map(|index| {
+            [
+                (index * 37 + 11) as u8,
+                (index * 71 + 29) as u8,
+                (index * 113 + 47) as u8,
+                (index * 5 + 50) as u8,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let image = source(7, 5, &pixels);
+    let polygon = Polygon::new([
+        Point::new(0.4, 0.2),
+        Point::new(6.8, 1.1),
+        Point::new(5.6, 4.9),
+        Point::new(1.1, 4.2),
+    ])
+    .unwrap();
+
+    for sampling in [
+        SamplingMode::Average,
+        SamplingMode::Centre,
+        SamplingMode::Darkest,
+        SamplingMode::Lightest,
+        SamplingMode::DominantColour,
+    ] {
+        let configure_threshold = || {
+            Threshold::new(Palette::pico_8())
+                .with_pixel_size(3, 2)
+                .unwrap()
+                .with_grid_offset(1, -1)
+                .with_sampling(sampling)
+        };
+        let expected = Renderer::new()
+            .render(
+                &image,
+                &configure_threshold(),
+                &Selection::Polygon(polygon.clone()),
+            )
+            .unwrap();
+        let ordered = OrderedDither::new(Palette::pico_8(), ThresholdMap::bayer_2x2())
+            .with_strength(0.0)
+            .unwrap()
+            .with_pixel_size(3, 2)
+            .unwrap()
+            .with_grid_offset(1, -1)
+            .with_sampling(sampling);
+        let noise = NoiseDither::new(Palette::pico_8(), NoiseAlgorithm::White)
+            .with_strength(0.0)
+            .unwrap()
+            .with_pixel_size(3, 2)
+            .unwrap()
+            .with_grid_offset(1, -1)
+            .with_sampling(sampling);
+        let diffusion = ErrorDiffusion::new(Palette::pico_8(), DiffusionAlgorithm::FloydSteinberg)
+            .with_strength(0.0)
+            .unwrap()
+            .with_pixel_size(3, 2)
+            .unwrap()
+            .with_grid_offset(1, -1)
+            .with_sampling(sampling);
+
+        for rendered in [
+            Renderer::new()
+                .render(&image, &ordered, &Selection::Polygon(polygon.clone()))
+                .unwrap(),
+            Renderer::new()
+                .render(&image, &noise, &Selection::Polygon(polygon.clone()))
+                .unwrap(),
+            Renderer::new()
+                .render(&image, &diffusion, &Selection::Polygon(polygon.clone()))
+                .unwrap(),
+        ] {
+            assert_eq!(
+                rendered.rgba8_bytes(),
+                expected.rgba8_bytes(),
+                "inconsistent {sampling:?} sampling"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1457,7 +1688,7 @@ fn threshold_fills_logical_pixels_with_their_average_colour() {
         ],
     );
     let effect = Threshold::new(Palette::black_and_white())
-        .with_pixel_size(2)
+        .with_pixel_size(2, 2)
         .unwrap();
     let rendered = Renderer::new()
         .render(&source, &effect, &Selection::All)
@@ -1473,7 +1704,7 @@ fn threshold_fills_logical_pixels_with_their_average_colour() {
 fn ordered_dithering_scales_bayer_cells() {
     let source = source(4, 1, &[[128, 128, 128, 9]; 4]);
     let effect = OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
-        .with_pixel_size(2)
+        .with_pixel_size(2, 2)
         .unwrap();
     let rendered = Renderer::new()
         .render(&source, &effect, &Selection::All)
@@ -1496,7 +1727,7 @@ fn scaled_dithering_keeps_cells_anchored_and_clipped_to_a_polygon() {
     ])
     .unwrap();
     let effect = OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_2x2())
-        .with_pixel_size(2)
+        .with_pixel_size(2, 2)
         .unwrap();
     let rendered = Renderer::new()
         .render(&source, &effect, &Selection::Polygon(polygon))
@@ -1515,10 +1746,10 @@ fn error_diffusion_operates_between_logical_pixels() {
         .collect::<Vec<_>>();
     let source = source(8, 1, &pixels);
     let floyd = diffusion(DiffusionAlgorithm::FloydSteinberg)
-        .with_pixel_size(2)
+        .with_pixel_size(2, 2)
         .unwrap();
     let atkinson = diffusion(DiffusionAlgorithm::Atkinson)
-        .with_pixel_size(2)
+        .with_pixel_size(2, 2)
         .unwrap();
 
     let floyd = Renderer::new()
@@ -1573,7 +1804,7 @@ fn supports_every_diffusion_algorithm_and_configuration() {
     for algorithm in algorithms {
         let effect = ErrorDiffusion::new(Palette::black_and_white(), algorithm)
             .with_scan(DiffusionScan::Serpentine)
-            .with_pixel_size(2)
+            .with_pixel_size(2, 2)
             .unwrap();
         let rendered = Renderer::new()
             .render(&source, &effect, &Selection::All)
@@ -1581,7 +1812,7 @@ fn supports_every_diffusion_algorithm_and_configuration() {
 
         assert_eq!(effect.algorithm(), Some(algorithm));
         assert_eq!(effect.scan(), DiffusionScan::Serpentine);
-        assert_eq!(effect.pixel_size(), 2);
+        assert_eq!(effect.pixel_size(), (2, 2));
         assert_eq!(effect.palette(), &Palette::black_and_white());
         for (before, after) in source
             .rgba8_bytes()
@@ -1597,7 +1828,7 @@ fn supports_every_diffusion_algorithm_and_configuration() {
 
     assert_eq!(
         ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
-            .with_pixel_size(0)
+            .with_pixel_size(0, 1)
             .unwrap_err()
             .kind(),
         ErrorKind::InvalidParameter

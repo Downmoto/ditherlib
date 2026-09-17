@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added independent logical pixel width and height, signed grid offsets, and
+  average, centre, darkest, lightest, and dominant-colour sampling to threshold,
+  ordered, noise, and error-diffusion effects.
+- Added a sampling and logical pixel-shape comparison example.
+
+### Changed
+
+- `with_pixel_size` now accepts width and height, and `pixel_size` returns both
+  dimensions.
+
 ## 0.8.1
 
 ### Added

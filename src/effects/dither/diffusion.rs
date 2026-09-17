@@ -1,4 +1,4 @@
-use super::cells::{align_to_grid, cell_bounds, sample_cell, validate_pixel_size, write_cell};
+use super::cells::{PixelGrid, SamplingMode, cell_bounds, sample_cell, write_cell};
 use super::colour::{ColourSpace, clamp_components, colour_components, colour_luminance};
 use super::palette::{Palette, PaletteMatchMode};
 use crate::{DitherError, Effect, ErrorKind, Mask, Result};
@@ -333,7 +333,7 @@ pub struct ErrorDiffusion {
     palette: Palette,
     kernel: DiffusionKernel,
     scan: DiffusionScan,
-    pixel_size: u32,
+    grid: PixelGrid,
     strength: u16,
     error_clamp: Option<u8>,
     error_mode: DiffusionErrorMode,
@@ -346,7 +346,7 @@ impl ErrorDiffusion {
             palette,
             kernel: kernel.into(),
             scan: DiffusionScan::Raster,
-            pixel_size: 1,
+            grid: PixelGrid::new(),
             strength: DIFFUSION_STRENGTH_SCALE,
             error_clamp: None,
             error_mode: DiffusionErrorMode::IndependentChannels,
@@ -379,19 +379,71 @@ impl ErrorDiffusion {
         self.scan
     }
 
-    /// Sets the width and height of each square logical pixel.
+    /// Sets the logical pixel width.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidParameter`] when `pixel_size` is zero.
-    pub fn with_pixel_size(mut self, pixel_size: u32) -> Result<Self> {
-        self.pixel_size = validate_pixel_size(pixel_size)?;
+    /// Returns [`ErrorKind::InvalidParameter`] when `width` is zero.
+    pub fn with_pixel_width(mut self, width: u32) -> Result<Self> {
+        self.grid = self.grid.with_width(width)?;
         Ok(self)
     }
 
-    /// Returns the width and height of each square logical pixel.
-    pub const fn pixel_size(&self) -> u32 {
-        self.pixel_size
+    /// Returns the logical pixel width.
+    pub const fn pixel_width(&self) -> u32 {
+        self.grid.width()
+    }
+
+    /// Sets the logical pixel height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when `height` is zero.
+    pub fn with_pixel_height(mut self, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_height(height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel height.
+    pub const fn pixel_height(&self) -> u32 {
+        self.grid.height()
+    }
+
+    /// Sets the logical pixel width and height.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidParameter`] when either dimension is zero.
+    pub fn with_pixel_size(mut self, width: u32, height: u32) -> Result<Self> {
+        self.grid = self.grid.with_size(width, height)?;
+        Ok(self)
+    }
+
+    /// Returns the logical pixel dimensions as `(width, height)`.
+    pub const fn pixel_size(&self) -> (u32, u32) {
+        self.grid.size()
+    }
+
+    /// Offsets the logical pixel grid in image pixels.
+    pub const fn with_grid_offset(mut self, x: i32, y: i32) -> Self {
+        self.grid = self.grid.with_offset(x, y);
+        self
+    }
+
+    /// Returns the logical pixel grid offset as `(x, y)` image pixels.
+    pub const fn grid_offset(&self) -> (i32, i32) {
+        self.grid.offset()
+    }
+
+    /// Selects the source-colour sampling used for each logical pixel.
+    pub const fn with_sampling(mut self, sampling: SamplingMode) -> Self {
+        self.grid = self.grid.with_sampling(sampling);
+        self
+    }
+
+    /// Returns the source-colour sampling mode.
+    pub const fn sampling(&self) -> SamplingMode {
+        self.grid.sampling()
     }
 
     /// Sets the proportion of quantisation error distributed to later pixels.
@@ -457,7 +509,7 @@ impl ErrorDiffusion {
         DiffusionParameters {
             palette: &self.palette,
             taps,
-            pixel_size: self.pixel_size,
+            grid: self.grid,
             strength: self.strength,
             error_clamp: self.error_clamp,
             error_mode: self.error_mode,
@@ -638,7 +690,7 @@ impl Effect for ErrorDiffusion {
 struct DiffusionParameters<'a> {
     palette: &'a Palette,
     taps: &'a [DiffusionTap],
-    pixel_size: u32,
+    grid: PixelGrid,
     strength: u16,
     error_clamp: Option<u8>,
     error_mode: DiffusionErrorMode,
@@ -656,7 +708,7 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool
     let DiffusionParameters {
         palette,
         taps,
-        pixel_size,
+        grid,
         strength,
         error_clamp,
         error_mode: _,
@@ -671,19 +723,19 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool
         i64::from(DIVISOR)
     };
     let image_width = dimensions.0 as usize;
-    let start_x = align_to_grid(min_x, pixel_size);
-    let start_y = align_to_grid(min_y, pixel_size);
-    let working_width = (max_x - start_x).div_ceil(pixel_size) as usize;
-    let working_height = (max_y - start_y).div_ceil(pixel_size) as usize;
+    let start_cell_x = grid.cell_x(min_x);
+    let start_cell_y = grid.cell_y(min_y);
+    let working_width = (grid.cell_x(max_x - 1) - start_cell_x + 1) as usize;
+    let working_height = (grid.cell_y(max_y - 1) - start_cell_y + 1) as usize;
     let mut selected = Vec::with_capacity(working_width * working_height);
     let mut working = Vec::with_capacity(working_width * working_height);
 
     for cell_y in 0..working_height {
         for cell_x in 0..working_width {
-            let x = start_x + cell_x as u32 * pixel_size;
-            let y = start_y + cell_y as u32 * pixel_size;
-            let bounds = cell_bounds(x, y, pixel_size, dimensions);
-            let colour = sample_cell(input, mask, image_width, bounds);
+            let cell_x = start_cell_x + cell_x as i64;
+            let cell_y = start_cell_y + cell_y as i64;
+            let bounds = cell_bounds(grid, cell_x, cell_y, dimensions);
+            let colour = sample_cell(input, mask, image_width, bounds, grid.sampling());
             selected.push(colour.is_some());
             working.push(
                 colour
@@ -694,7 +746,7 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool
     }
 
     for cell_y in 0..working_height {
-        let reverse = SERPENTINE && (start_y / pixel_size + cell_y as u32) % 2 == 1;
+        let reverse = SERPENTINE && (start_cell_y + cell_y as i64).rem_euclid(2) == 1;
         for column in 0..working_width {
             let cell_x = if reverse {
                 working_width - column - 1
@@ -711,14 +763,17 @@ fn diffuse_error<const DIVISOR: i32, const SERPENTINE: bool, const DEFAULT: bool
             let colour = palette.nearest_colour(
                 adjusted.map(|channel| ((channel + FIXED_SCALE / 2) / FIXED_SCALE) as u8),
             );
-            let x = start_x + cell_x as u32 * pixel_size;
-            let y = start_y + cell_y as u32 * pixel_size;
             write_cell(
                 input,
                 output,
                 mask,
                 image_width,
-                cell_bounds(x, y, pixel_size, dimensions),
+                cell_bounds(
+                    grid,
+                    start_cell_x + cell_x as i64,
+                    start_cell_y + cell_y as i64,
+                    dimensions,
+                ),
                 colour,
             );
             let error = [
@@ -796,7 +851,7 @@ fn diffuse_error_transformed<const SERPENTINE: bool>(
     let DiffusionParameters {
         palette,
         taps,
-        pixel_size,
+        grid,
         strength,
         error_clamp,
         error_mode,
@@ -806,22 +861,26 @@ fn diffuse_error_transformed<const SERPENTINE: bool>(
         return;
     };
     let image_width = dimensions.0 as usize;
-    let start_x = align_to_grid(min_x, pixel_size);
-    let start_y = align_to_grid(min_y, pixel_size);
-    let working_width = (max_x - start_x).div_ceil(pixel_size) as usize;
-    let working_height = (max_y - start_y).div_ceil(pixel_size) as usize;
+    let start_cell_x = grid.cell_x(min_x);
+    let start_cell_y = grid.cell_y(min_y);
+    let working_width = (grid.cell_x(max_x - 1) - start_cell_x + 1) as usize;
+    let working_height = (grid.cell_y(max_y - 1) - start_cell_y + 1) as usize;
     let mut selected = Vec::with_capacity(working_width * working_height);
     let mut working = Vec::with_capacity(working_width * working_height);
 
     for cell_y in 0..working_height {
         for cell_x in 0..working_width {
-            let x = start_x + cell_x as u32 * pixel_size;
-            let y = start_y + cell_y as u32 * pixel_size;
             let colour = sample_cell(
                 input,
                 mask,
                 image_width,
-                cell_bounds(x, y, pixel_size, dimensions),
+                cell_bounds(
+                    grid,
+                    start_cell_x + cell_x as i64,
+                    start_cell_y + cell_y as i64,
+                    dimensions,
+                ),
+                grid.sampling(),
             );
             selected.push(colour.is_some());
             working.push(colour_components(
@@ -835,7 +894,7 @@ fn diffuse_error_transformed<const SERPENTINE: bool>(
     let strength = f32::from(strength) / f32::from(DIFFUSION_STRENGTH_SCALE);
     let error_clamp = error_clamp.map(|maximum| f32::from(maximum) / 255.0);
     for cell_y in 0..working_height {
-        let reverse = SERPENTINE && (start_y / pixel_size + cell_y as u32) % 2 == 1;
+        let reverse = SERPENTINE && (start_cell_y + cell_y as i64).rem_euclid(2) == 1;
         for column in 0..working_width {
             let cell_x = if reverse {
                 working_width - column - 1
@@ -850,14 +909,17 @@ fn diffuse_error_transformed<const SERPENTINE: bool>(
             let adjusted = clamp_components(working[working_index], palette.colour_space);
             let colour = palette.nearest_transformed(adjusted);
             let matched = colour_components(colour, palette.colour_space);
-            let x = start_x + cell_x as u32 * pixel_size;
-            let y = start_y + cell_y as u32 * pixel_size;
             write_cell(
                 input,
                 output,
                 mask,
                 image_width,
-                cell_bounds(x, y, pixel_size, dimensions),
+                cell_bounds(
+                    grid,
+                    start_cell_x + cell_x as i64,
+                    start_cell_y + cell_y as i64,
+                    dimensions,
+                ),
                 colour,
             );
             let mut error = match error_mode {

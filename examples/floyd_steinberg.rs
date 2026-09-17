@@ -25,7 +25,7 @@ fn run(input: OsString, output: OsString) -> ditherlib::Result<()> {
         Palette::black_and_white(),
         DiffusionAlgorithm::FloydSteinberg,
     )
-    .with_pixel_size(4)?;
+    .with_pixel_size(4, 4)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write(output, &rendered)
 }

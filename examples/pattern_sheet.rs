@@ -52,7 +52,7 @@ fn run(input: OsString, output: OsString) -> Result<(), Box<dyn std::error::Erro
     for (index, (label, map)) in patterns.into_iter().enumerate() {
         let effect = OrderedDither::new(Palette::black_and_white(), map)
             .with_strength(0.85)?
-            .with_pixel_size(pixel_size)?;
+            .with_pixel_size(pixel_size, pixel_size)?;
         let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
         let image = RgbaImage::from_raw(
             source.width(),

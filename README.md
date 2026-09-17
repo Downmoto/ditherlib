@@ -26,7 +26,7 @@ re-render pipelines.
 - Custom RGB palettes, black-and-white palettes, and monochrome palettes
 - Palette derivation from source-image colours with an optional size limit
 - RGB, linear RGB, and Oklab palette matching with luminance-only control
-- Configurable logical pixel sizes for every dithering method
+- Rectangular logical pixels with grid offsets and five sampling modes
 - Whole-image and polygon selections with anti-aliased edges
 - Ordered multi-effect pipelines with reusable rendering buffers
 - Crate-owned image, result, and error types
@@ -80,7 +80,7 @@ fn main() -> ditherlib::Result<()> {
             Palette::monochrome(Colour::RED),
             ThresholdMap::bayer_4x4(),
         )
-            .with_pixel_size(4)?,
+            .with_pixel_size(4, 4)?,
         Selection::Polygon(area),
     );
 
@@ -92,6 +92,34 @@ fn main() -> ditherlib::Result<()> {
 Pipeline order matters. Each step receives the result of the previous step,
 including where polygon selections overlap. Rendering the same pipeline again
 always begins from the unchanged `SourceImage`.
+
+## Logical pixel geometry and sampling
+
+Threshold, ordered, noise, and error-diffusion effects share the same logical
+pixel controls. Width and height use image pixels, and signed grid offsets move
+the grid right and down for positive values.
+
+```rust
+use ditherlib::{Palette, SamplingMode, Threshold};
+
+fn main() -> ditherlib::Result<()> {
+    let effect = Threshold::new(Palette::pico_8())
+        .with_pixel_size(12, 6)?
+        .with_grid_offset(3, -2)
+        .with_sampling(SamplingMode::DominantColour);
+    assert_eq!(effect.pixel_size(), (12, 6));
+    assert_eq!(effect.grid_offset(), (3, -2));
+    Ok(())
+}
+```
+
+`SamplingMode` provides coverage-weighted average, centre, darkest, lightest,
+and coverage-weighted dominant-colour sampling. Centre sampling uses the
+selected source pixel nearest the centre of the image-clipped cell. Darkest and
+lightest use RGB luma. Equal dominant-colour coverage resolves to the colour
+encountered first. Every mode samples only pixels covered by the active
+selection, including anti-aliased polygon intersections and partial cells at
+image edges.
 
 ## Ordered dithering
 
@@ -138,7 +166,7 @@ fn main() -> ditherlib::Result<()> {
     let effect = NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::Blue)
         .with_seed(67)
         .with_strength(0.85)?
-        .with_pixel_size(2)?;
+        .with_pixel_size(2, 2)?;
     assert_eq!(effect.seed(), 67);
     Ok(())
 }
@@ -306,7 +334,7 @@ fn main() -> ditherlib::Result<()> {
     let source = read("input.png")?;
     let effect = ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
         .with_scan(DiffusionScan::Serpentine)
-        .with_pixel_size(2)?;
+        .with_pixel_size(2, 2)?;
     let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
     write("output.png", &rendered)
 }
@@ -378,6 +406,7 @@ cargo run --release --example pattern_sheet -- input.jpg patterns.png
 cargo run --release --example noise_comparison -- input.jpg noise.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 cargo run --release --example palette_matching_comparison -- input.jpg matching.png
+cargo run --release --example pixel_sampling_comparison -- input.jpg sampling.png shapes.png
 ```
 
 The diffusion comparison requires an image with an even width and creates seven
@@ -408,6 +437,9 @@ to every quadrant so the palette is the only variable.
 The palette-matching comparison keeps the source in the top-left quadrant and
 uses RGB, linear RGB, and Oklab matching in the remaining quadrants in reading
 order. Every processed quadrant uses the same PICO-8 palette.
+
+The pixel-sampling comparison creates five vertical sampling bands and a
+second image comparing square, wide, tall, and offset-square logical pixels.
 
 Additional examples cover each built-in effect in the [`examples`](./examples/)
 directory.

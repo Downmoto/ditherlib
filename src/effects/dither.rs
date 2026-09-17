@@ -6,6 +6,7 @@ mod noise;
 mod palette;
 mod threshold;
 
+pub use cells::SamplingMode;
 pub use colour::{Color, Colour, ColourSpace};
 pub use diffusion::{
     DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
