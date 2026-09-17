@@ -36,6 +36,9 @@ jobs:
       - name: Test examples
         run: cargo test --examples
 
+      - name: Check benchmarks
+        run: cargo bench --no-run --locked
+
       - name: Check documentation
         env:
           RUSTDOCFLAGS: -D warnings
