@@ -33,3 +33,10 @@ webp = ["image/webp"]
 
 [dependencies]
 image = { version = "0.25.10", default-features = false }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false }
+
+[[bench]]
+name = "benchmarks"
+harness = false
