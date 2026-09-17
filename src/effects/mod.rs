@@ -10,5 +10,5 @@ pub use dither::{
     ColourHalftoneMode, ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel,
     DiffusionScan, DiffusionTap, DotShape, ErrorDiffusion, Halftone, HalftoneChannel,
     HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, PaletteMatchMode,
-    PaletteSize, SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
+    PaletteSize, RiemersmaDither, SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
 };

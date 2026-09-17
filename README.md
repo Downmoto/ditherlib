@@ -19,6 +19,7 @@ re-render pipelines.
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
+- Hilbert-curve Riemersma dithering with configurable history and decay
 - Bayer, clustered-dot, line, crosshatch, checkerboard, and dispersed-dot
   threshold maps
 - Built-in 16x16 blue-noise threshold map
@@ -95,9 +96,9 @@ always begins from the unchanged `SourceImage`.
 
 ## Logical pixel geometry and sampling
 
-Threshold, ordered, noise, and error-diffusion effects share the same logical
-pixel controls. Width and height use image pixels, and signed grid offsets move
-the grid right and down for positive values.
+Threshold, ordered, noise, error-diffusion, and Riemersma effects share the same
+logical pixel controls. Width and height use image pixels, and signed grid
+offsets move the grid right and down for positive values.
 
 ```rust
 use ditherlib::{Palette, SamplingMode, Threshold};
@@ -382,6 +383,33 @@ Built-in presets have distinct grain and edge behaviour:
 | Stevenson-Arce | Very fine, dispersed grain with smooth tones and preserved detail |
 | Two-dimensional Knuth | Minimal, regular diagonal texture |
 
+## Riemersma dithering
+
+`RiemersmaDither` carries recent quantisation errors along a Hilbert curve,
+avoiding the horizontal emphasis of row-based diffusion. It defaults to the
+[originally recommended](https://www.compuphase.com/riemer.htm) 16-entry
+history and a 16:1 newest-to-oldest weight ratio. A decay of `1.0` weights every
+retained error equally, while larger values suppress older errors more
+strongly.
+
+```rust,no_run
+use ditherlib::{Palette, Renderer, RiemersmaDither, Selection, read, write};
+
+fn main() -> ditherlib::Result<()> {
+    let source = read("input.png")?;
+    let effect = RiemersmaDither::new(Palette::pico_8())
+        .with_history_length(24)?
+        .with_decay(20.0)?
+        .with_pixel_size(2, 2)?;
+    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
+    write("output.png", &rendered)
+}
+```
+
+The traversal is deterministic and visits every selected logical pixel once.
+History resets at selection gaps and where clipping a square Hilbert curve to a
+rectangular image creates a discontinuity.
+
 ## Errors
 
 Fallible operations return `ditherlib::Result<T>`. Use `DitherError::kind()`
@@ -407,6 +435,7 @@ cargo run --release --example noise_comparison -- input.jpg noise.png
 cargo run --release --example palette_comparison -- input.jpg palettes.png
 cargo run --release --example palette_matching_comparison -- input.jpg matching.png
 cargo run --release --example pixel_sampling_comparison -- input.jpg sampling.png shapes.png
+cargo run --release --example riemersma_comparison -- input.jpg comparison.png
 ```
 
 The diffusion comparison requires an image with an even width and creates seven
@@ -440,6 +469,9 @@ order. Every processed quadrant uses the same PICO-8 palette.
 
 The pixel-sampling comparison creates five vertical sampling bands and a
 second image comparing square, wide, tall, and offset-square logical pixels.
+
+The Riemersma comparison places Hilbert-curve diffusion on the left and
+serpentine Floyd-Steinberg diffusion on the right.
 
 Additional examples cover each built-in effect in the [`examples`](./examples/)
 directory.

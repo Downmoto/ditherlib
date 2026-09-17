@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- Added deterministic Riemersma error diffusion along a Hilbert curve with
+  configurable history length and exponential decay.
+- Added palette, logical-pixel, sampling, grid-offset, and polygon-selection
+  support to Riemersma dithering.
+- Added a Riemersma and serpentine error-diffusion comparison example.
+
 ## 0.8.2
 
 ### Added

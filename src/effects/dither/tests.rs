@@ -2,12 +2,13 @@ use super::{
     CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
     DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
     ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
-    OrderedDither, Palette, PaletteMatchMode, PaletteSize, SamplingMode, Threshold, ThresholdMap,
-    ThresholdRotation,
+    OrderedDither, Palette, PaletteMatchMode, PaletteSize, RiemersmaDither, SamplingMode,
+    Threshold, ThresholdMap, ThresholdRotation,
     cells::sample_cell,
     colour::colour_components,
     halftone::{cmyk_to_rgb, rgb_to_cmyk},
     noise::blue_noise,
+    riemersma::hilbert_cells,
 };
 use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
 
@@ -1411,6 +1412,167 @@ fn error_diffusion_is_repeatable() {
         .render(&source, &atkinson, &Selection::All)
         .unwrap();
     assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+}
+
+#[test]
+fn hilbert_traversal_visits_every_rectangular_cell_once() {
+    assert_eq!(
+        hilbert_cells(4, 4),
+        [
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (1, 3),
+            (1, 2),
+            (2, 2),
+            (2, 3),
+            (3, 3),
+            (3, 2),
+            (3, 1),
+            (2, 1),
+            (2, 0),
+            (3, 0),
+        ]
+    );
+
+    let cells = hilbert_cells(5, 3);
+    let unique = cells
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(cells.len(), 15);
+    assert_eq!(unique.len(), 15);
+    assert!((0..3).all(|y| (0..5).all(|x| unique.contains(&(x, y)))));
+}
+
+#[test]
+fn configures_and_validates_riemersma_dithering() {
+    let effect = RiemersmaDither::new(Palette::pico_8())
+        .with_history_length(8)
+        .unwrap()
+        .with_decay(4.0)
+        .unwrap()
+        .with_pixel_size(3, 2)
+        .unwrap()
+        .with_grid_offset(-1, 2)
+        .with_sampling(SamplingMode::Centre);
+
+    assert_eq!(effect.palette(), &Palette::pico_8());
+    assert_eq!(effect.history_length(), 8);
+    assert_eq!(effect.decay(), 4.0);
+    assert_eq!(effect.pixel_size(), (3, 2));
+    assert_eq!((effect.pixel_width(), effect.pixel_height()), (3, 2));
+    assert_eq!(effect.grid_offset(), (-1, 2));
+    assert_eq!(effect.sampling(), SamplingMode::Centre);
+
+    let default = RiemersmaDither::new(Palette::black_and_white());
+    assert_eq!(default.history_length(), 16);
+    assert_eq!(default.decay(), 16.0);
+
+    for error in [
+        default.clone().with_history_length(0).unwrap_err(),
+        default.clone().with_decay(0.99).unwrap_err(),
+        default.clone().with_decay(f32::NAN).unwrap_err(),
+        default.clone().with_decay(f32::INFINITY).unwrap_err(),
+        default.with_pixel_size(0, 1).unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), ErrorKind::InvalidParameter);
+    }
+}
+
+#[test]
+fn riemersma_is_deterministic_distinct_and_configurable() {
+    let pixels = (0..64)
+        .map(|index| {
+            let value = ((index * 43 + index * index * 7) % 256) as u8;
+            [value, value, value, 100 + index as u8]
+        })
+        .collect::<Vec<_>>();
+    let image = source(8, 8, &pixels);
+    let effect = RiemersmaDither::new(Palette::black_and_white());
+    let first = Renderer::new()
+        .render(&image, &effect, &Selection::All)
+        .unwrap();
+    let second = Renderer::new()
+        .render(&image, &effect, &Selection::All)
+        .unwrap();
+    let serpentine = Renderer::new()
+        .render(
+            &image,
+            &diffusion(DiffusionAlgorithm::FloydSteinberg).with_scan(DiffusionScan::Serpentine),
+            &Selection::All,
+        )
+        .unwrap();
+    let short_history = Renderer::new()
+        .render(
+            &image,
+            &effect
+                .clone()
+                .with_history_length(1)
+                .unwrap()
+                .with_decay(1.0)
+                .unwrap(),
+            &Selection::All,
+        )
+        .unwrap();
+
+    assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+    assert_ne!(first.rgba8_bytes(), serpentine.rgba8_bytes());
+    assert_ne!(first.rgba8_bytes(), short_history.rgba8_bytes());
+    for (before, after) in image
+        .rgba8_bytes()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(first.rgba8_bytes().as_chunks::<4>().0)
+    {
+        assert!(after[..3] == [0; 3] || after[..3] == [255; 3]);
+        assert_eq!(after[3], before[3]);
+    }
+}
+
+#[test]
+fn riemersma_supports_logical_pixels_and_polygon_selections() {
+    let pixels = (0..35)
+        .map(|index| {
+            [
+                (index * 37) as u8,
+                (index * 71) as u8,
+                (index * 109) as u8,
+                200,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let image = source(7, 5, &pixels);
+    let polygon = Polygon::rectangle(Point::new(1.0, 1.0), 5.0, 3.0).unwrap();
+    let effect = RiemersmaDither::new(Palette::pico_8())
+        .with_pixel_size(2, 2)
+        .unwrap()
+        .with_grid_offset(1, 0)
+        .with_sampling(SamplingMode::DominantColour);
+    let rendered = Renderer::new()
+        .render(&image, &effect, &Selection::Polygon(polygon))
+        .unwrap();
+
+    for y in 0..5 {
+        for x in 0..7 {
+            if (1..6).contains(&x) && (1..4).contains(&y) {
+                let pixel = rendered.pixel(x, y).unwrap();
+                assert!(
+                    effect
+                        .palette()
+                        .colours()
+                        .contains(&[pixel[0], pixel[1], pixel[2]])
+                );
+                assert_eq!(pixel[3], 200);
+            } else {
+                assert_eq!(rendered.pixel(x, y), image.pixel(x, y));
+            }
+        }
+    }
 }
 
 #[test]
