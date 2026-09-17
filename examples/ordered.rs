@@ -1,6 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{OrderedDither, Palette, Renderer, Selection, ThresholdMap, read, write};
+use ditherlib::prelude::*;
 
 fn main() -> ExitCode {
     let mut arguments = env::args_os().skip(1);

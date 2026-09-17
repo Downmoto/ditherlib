@@ -1,27 +1,24 @@
 mod cells;
-mod colour;
-mod diffusion;
-mod halftone;
-mod noise;
-mod ostromoukhov;
-mod palette;
-mod riemersma;
-mod threshold;
-
-pub use cells::SamplingMode;
-pub use colour::{Color, Colour, ColourSpace};
-pub use diffusion::{
-    DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
-    ErrorDiffusion,
-};
-pub use halftone::{
-    CmykScreenPreset, ColourHalftone, ColourHalftoneMode, Halftone, HalftoneChannel, HalftoneShape,
-};
-pub use noise::{NoiseAlgorithm, NoiseDither};
-pub use ostromoukhov::OstromoukhovDither;
-pub use palette::{Palette, PaletteMatchMode, PaletteSize};
-pub use riemersma::RiemersmaDither;
-pub use threshold::{OrderedDither, Threshold, ThresholdMap, ThresholdRotation};
+/// RGB colours and colour spaces.
+pub mod colour;
+/// Fixed-kernel error diffusion.
+pub mod diffusion;
+/// Monochrome and colour halftone screens.
+pub mod halftone;
+/// White-noise and blue-noise dithering.
+pub mod noise;
+/// Ostromoukhov variable-coefficient error diffusion.
+pub mod ostromoukhov;
+/// Colour palettes and matching configuration.
+pub mod palette;
+/// Riemersma Hilbert-curve error diffusion.
+pub mod riemersma;
+/// Logical-pixel sampling modes shared by dithering effects.
+pub mod sampling {
+    pub use super::cells::SamplingMode;
+}
+/// Threshold and ordered dithering.
+pub mod threshold;
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{OrderedDither, Palette, Renderer, Selection, ThresholdMap, read};
+use ditherlib::prelude::*;
 use image::{Rgba, RgbaImage, imageops::FilterType};
 
 const COLUMNS: u32 = 4;

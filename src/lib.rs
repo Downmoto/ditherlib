@@ -3,23 +3,62 @@
 
 use std::fmt;
 
-mod effects;
+/// Image effects grouped by algorithm family.
+pub mod effects;
 mod io;
 mod pipeline;
 mod renderer;
 mod selection;
 
-pub use effects::{
-    Blur, CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
-    DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
-    ErrorDiffusion, Greyscale, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm,
-    NoiseDither, OrderedDither, OstromoukhovDither, Palette, PaletteMatchMode, PaletteSize,
-    RiemersmaDither, SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
-};
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};
 pub use renderer::{Effect, RenderedImage, Renderer};
 pub use selection::{Mask, Point, Polygon, Selection};
+
+/// Convenient imports for applications that use several effect families.
+///
+/// Individual effects are also available through specific paths such as
+/// [`crate::effects::dither::diffusion::ErrorDiffusion`].
+///
+/// ```
+/// use ditherlib::effects::dither::{
+///     diffusion::{DiffusionAlgorithm, ErrorDiffusion},
+///     palette::Palette,
+/// };
+///
+/// let effect = ErrorDiffusion::new(
+///     Palette::black_and_white(),
+///     DiffusionAlgorithm::FloydSteinberg,
+/// );
+/// ```
+pub mod prelude {
+    pub use crate::{
+        DitherError, Effect, ErrorKind, Mask, Pipeline, PipelineStep, Point, Polygon,
+        RenderedImage, Renderer, Selection, SourceImage,
+        effects::{
+            blur::Blur,
+            dither::{
+                colour::{Color, Colour, ColourSpace},
+                diffusion::{
+                    DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan,
+                    DiffusionTap, ErrorDiffusion,
+                },
+                halftone::{
+                    CmykScreenPreset, ColourHalftone, ColourHalftoneMode, Halftone,
+                    HalftoneChannel, HalftoneShape,
+                },
+                noise::{NoiseAlgorithm, NoiseDither},
+                ostromoukhov::OstromoukhovDither,
+                palette::{Palette, PaletteMatchMode, PaletteSize},
+                riemersma::RiemersmaDither,
+                sampling::SamplingMode,
+                threshold::{OrderedDither, Threshold, ThresholdMap, ThresholdRotation},
+            },
+            greyscale::Greyscale,
+        },
+        read, write,
+    };
+}
 
 /// A result returned by Ditherlib operations.
 pub type Result<T> = std::result::Result<T, DitherError>;

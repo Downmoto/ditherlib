@@ -1,14 +1,6 @@
-mod blur;
-mod dither;
-mod greyscale;
-
-pub use blur::Blur;
-pub use greyscale::Greyscale;
-
-pub use dither::{
-    CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
-    DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
-    ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
-    OrderedDither, OstromoukhovDither, Palette, PaletteMatchMode, PaletteSize, RiemersmaDither,
-    SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
-};
+/// Gaussian blur.
+pub mod blur;
+/// Dithering algorithms and their supporting colour, palette, and sampling types.
+pub mod dither;
+/// Greyscale conversion.
+pub mod greyscale;

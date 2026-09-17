@@ -90,7 +90,7 @@ mod tests {
     use super::write;
     #[cfg(not(feature = "png"))]
     use crate::ErrorKind;
-    use crate::{Greyscale, Renderer, Selection, SourceImage};
+    use crate::{Renderer, Selection, SourceImage, effects::greyscale::Greyscale};
 
     /// Creates a unique path in the system temporary directory.
     fn temporary_path(extension: &str) -> PathBuf {

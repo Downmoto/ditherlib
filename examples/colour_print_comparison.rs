@@ -1,8 +1,6 @@
 use std::{env, ffi::OsString, process::ExitCode};
 
-use ditherlib::{
-    CmykScreenPreset, ColourHalftone, ColourHalftoneMode, HalftoneShape, Renderer, Selection, read,
-};
+use ditherlib::prelude::*;
 use image::{Rgba, RgbaImage, imageops::FilterType};
 
 const MAX_TILE_WIDTH: u32 = 360;
