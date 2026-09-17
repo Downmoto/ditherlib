@@ -3,6 +3,7 @@ mod colour;
 mod diffusion;
 mod halftone;
 mod noise;
+mod ostromoukhov;
 mod palette;
 mod riemersma;
 mod threshold;
@@ -18,6 +19,7 @@ pub use halftone::{
     Halftone, HalftoneChannel, HalftoneShape,
 };
 pub use noise::{NoiseAlgorithm, NoiseDither};
+pub use ostromoukhov::OstromoukhovDither;
 pub use palette::{Palette, PaletteMatchMode, PaletteSize};
 pub use riemersma::RiemersmaDither;
 pub use threshold::{OrderedDither, Threshold, ThresholdMap, ThresholdRotation};

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.1
+
+### Added
+
+- Added Ostromoukhov variable-coefficient error diffusion with the published
+  8-bit coefficient table, serpentine scanning, and width-bounded working
+  memory.
+- Added palette, logical-pixel, sampling, grid-offset, and polygon-selection
+  support to adaptive diffusion.
+- Added an adaptive and fixed-kernel diffusion comparison example.
+
 ## 0.9.0
 
 ### Added

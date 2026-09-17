@@ -2,12 +2,13 @@ use super::{
     CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
     DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
     ErrorDiffusion, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm, NoiseDither,
-    OrderedDither, Palette, PaletteMatchMode, PaletteSize, RiemersmaDither, SamplingMode,
-    Threshold, ThresholdMap, ThresholdRotation,
+    OrderedDither, OstromoukhovDither, Palette, PaletteMatchMode, PaletteSize, RiemersmaDither,
+    SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
     cells::sample_cell,
     colour::colour_components,
     halftone::{cmyk_to_rgb, rgb_to_cmyk},
     noise::blue_noise,
+    ostromoukhov::published_coefficients,
     riemersma::hilbert_cells,
 };
 use crate::{Effect, ErrorKind, Mask, Point, Polygon, Renderer, Selection, SourceImage};
@@ -1412,6 +1413,140 @@ fn error_diffusion_is_repeatable() {
         .render(&source, &atkinson, &Selection::All)
         .unwrap();
     assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+}
+
+#[test]
+fn ostromoukhov_coefficients_match_the_published_table() {
+    assert_eq!(published_coefficients(0), [13, 0, 5]);
+    assert_eq!(published_coefficients(22), [3, 2, 1]);
+    assert_eq!(published_coefficients(64), [11, 10, 0]);
+    assert_eq!(published_coefficients(77), [4, 1, 1]);
+    assert_eq!(published_coefficients(95), [5, 3, 2]);
+    assert_eq!(published_coefficients(127), [4, 1, 1]);
+
+    let checksum = (0u8..128)
+        .map(|tone| {
+            published_coefficients(tone)
+                .into_iter()
+                .enumerate()
+                .map(|(channel, value)| {
+                    u64::from(tone + 1) * (channel + 1) as u64 * u64::from(value)
+                })
+                .sum::<u64>()
+        })
+        .sum::<u64>();
+    assert_eq!(checksum, 8_700_413);
+
+    for tone in 0..=255 {
+        assert_eq!(
+            published_coefficients(tone),
+            published_coefficients(255 - tone)
+        );
+        assert!(published_coefficients(tone).iter().sum::<u16>() > 0);
+    }
+}
+
+#[test]
+fn ostromoukhov_is_deterministic_distinct_and_smooth_on_gradients() {
+    let pixels = (0..64)
+        .flat_map(|_| (0..256).map(|value| [value as u8, value as u8, value as u8, 173]))
+        .collect::<Vec<_>>();
+    let image = source(256, 64, &pixels);
+    let effect = OstromoukhovDither::new(Palette::black_and_white());
+    let first = Renderer::new()
+        .render(&image, &effect, &Selection::All)
+        .unwrap();
+    let second = Renderer::new()
+        .render(&image, &effect, &Selection::All)
+        .unwrap();
+    let fixed = Renderer::new()
+        .render(
+            &image,
+            &diffusion(DiffusionAlgorithm::FloydSteinberg).with_scan(DiffusionScan::Serpentine),
+            &Selection::All,
+        )
+        .unwrap();
+
+    assert_eq!(first.rgba8_bytes(), second.rgba8_bytes());
+    assert_ne!(first.rgba8_bytes(), fixed.rgba8_bytes());
+
+    let white_counts = (0..16)
+        .map(|band| {
+            (0..64)
+                .flat_map(|y| (band * 16..band * 16 + 16).map(move |x| (x, y)))
+                .filter(|&(x, y)| first.pixel(x, y).unwrap()[0] == 255)
+                .count()
+        })
+        .collect::<Vec<_>>();
+    assert!(white_counts.windows(2).all(|counts| counts[0] < counts[1]));
+    for (band, &actual) in white_counts.iter().enumerate() {
+        let expected = (0..64)
+            .flat_map(|_| band * 16..band * 16 + 16)
+            .map(|value| value as f32 / 255.0)
+            .sum::<f32>();
+        assert!((actual as f32 - expected).abs() < 16.0);
+    }
+    assert!(
+        first
+            .rgba8_bytes()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| { (pixel[..3] == [0; 3] || pixel[..3] == [255; 3]) && pixel[3] == 173 })
+    );
+}
+
+#[test]
+fn ostromoukhov_supports_logical_pixels_and_polygon_selections() {
+    let pixels = (0..35)
+        .map(|index| {
+            [
+                (index * 37) as u8,
+                (index * 71) as u8,
+                (index * 109) as u8,
+                201,
+            ]
+        })
+        .collect::<Vec<_>>();
+    let image = source(7, 5, &pixels);
+    let polygon = Polygon::rectangle(Point::new(1.0, 1.0), 5.0, 3.0).unwrap();
+    let effect = OstromoukhovDither::new(Palette::pico_8())
+        .with_pixel_size(2, 2)
+        .unwrap()
+        .with_grid_offset(1, 0)
+        .with_sampling(SamplingMode::DominantColour);
+    let rendered = Renderer::new()
+        .render(&image, &effect, &Selection::Polygon(polygon))
+        .unwrap();
+
+    assert_eq!(effect.pixel_size(), (2, 2));
+    assert_eq!((effect.pixel_width(), effect.pixel_height()), (2, 2));
+    assert_eq!(effect.grid_offset(), (1, 0));
+    assert_eq!(effect.sampling(), SamplingMode::DominantColour);
+    assert_eq!(effect.palette(), &Palette::pico_8());
+    assert_eq!(
+        OstromoukhovDither::new(Palette::black_and_white())
+            .with_pixel_width(0)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidParameter
+    );
+    for y in 0..5 {
+        for x in 0..7 {
+            if (1..6).contains(&x) && (1..4).contains(&y) {
+                let pixel = rendered.pixel(x, y).unwrap();
+                assert!(
+                    effect
+                        .palette()
+                        .colours()
+                        .contains(&pixel[..3].try_into().unwrap())
+                );
+                assert_eq!(pixel[3], 201);
+            } else {
+                assert_eq!(rendered.pixel(x, y), image.pixel(x, y));
+            }
+        }
+    }
 }
 
 #[test]

@@ -13,8 +13,9 @@ pub use effects::{
     Blur, ChannelMode, CmykScreenPreset, Color, Colour, ColourChannel, ColourHalftone,
     ColourHalftoneMode, ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel,
     DiffusionScan, DiffusionTap, DotShape, ErrorDiffusion, Greyscale, Halftone, HalftoneChannel,
-    HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, Palette, PaletteMatchMode,
-    PaletteSize, RiemersmaDither, SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
+    HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, OstromoukhovDither, Palette,
+    PaletteMatchMode, PaletteSize, RiemersmaDither, SamplingMode, Threshold, ThresholdMap,
+    ThresholdRotation,
 };
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};

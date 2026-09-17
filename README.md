@@ -19,6 +19,7 @@ re-render pipelines.
 - Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
   broad Stevenson-Arce
 - Custom diffusion kernels, strength, clamping, and scan direction
+- Tone-adaptive Ostromoukhov diffusion with published variable coefficients
 - Hilbert-curve Riemersma dithering with configurable history and decay
 - Bayer, clustered-dot, line, crosshatch, checkerboard, and dispersed-dot
   threshold maps
@@ -41,14 +42,14 @@ JPEG and PNG support are enabled by default:
 
 ```toml
 [dependencies]
-ditherlib = "0.8"
+ditherlib = "0.9"
 ```
 
 Codec features can be selected individually:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.8", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "0.9", default-features = false, features = ["png", "webp"] }
 ```
 
 Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
@@ -96,9 +97,9 @@ always begins from the unchanged `SourceImage`.
 
 ## Logical pixel geometry and sampling
 
-Threshold, ordered, noise, error-diffusion, and Riemersma effects share the same
-logical pixel controls. Width and height use image pixels, and signed grid
-offsets move the grid right and down for positive values.
+Threshold, ordered, noise, error-diffusion, Ostromoukhov, and Riemersma effects
+share the same logical pixel controls. Width and height use image pixels, and
+signed grid offsets move the grid right and down for positive values.
 
 ```rust
 use ditherlib::{Palette, SamplingMode, Threshold};
@@ -383,6 +384,26 @@ Built-in presets have distinct grain and edge behaviour:
 | Stevenson-Arce | Very fine, dispersed grain with smooth tones and preserved detail |
 | Two-dimensional Knuth | Minimal, regular diagonal texture |
 
+## Adaptive diffusion
+
+`OstromoukhovDither` uses a serpentine scan and selects three error-distribution
+weights independently for each error-adjusted RGB channel. The 8-bit
+coefficient table comes from Appendix I of
+[Ostromoukhov's original paper](https://perso.liris.cnrs.fr/victor.ostromoukhov/publications/pdf/SIGGRAPH01_varcoeffED.pdf).
+Rolling source and error rows keep working memory proportional to image width.
+
+```rust,no_run
+use ditherlib::{OstromoukhovDither, Palette, Renderer, Selection, read, write};
+
+fn main() -> ditherlib::Result<()> {
+    let source = read("input.png")?;
+    let effect = OstromoukhovDither::new(Palette::black_and_white())
+        .with_pixel_size(2, 2)?;
+    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
+    write("output.png", &rendered)
+}
+```
+
 ## Riemersma dithering
 
 `RiemersmaDither` carries recent quantisation errors along a Hilbert curve,
@@ -436,6 +457,7 @@ cargo run --release --example palette_comparison -- input.jpg palettes.png
 cargo run --release --example palette_matching_comparison -- input.jpg matching.png
 cargo run --release --example pixel_sampling_comparison -- input.jpg sampling.png shapes.png
 cargo run --release --example riemersma_comparison -- input.jpg comparison.png
+cargo run --release --example adaptive_diffusion_comparison -- input.jpg comparison.png
 ```
 
 The diffusion comparison requires an image with an even width and creates seven
@@ -472,6 +494,9 @@ second image comparing square, wide, tall, and offset-square logical pixels.
 
 The Riemersma comparison places Hilbert-curve diffusion on the left and
 serpentine Floyd-Steinberg diffusion on the right.
+
+The adaptive diffusion comparison places Ostromoukhov diffusion on the left
+and fixed-kernel serpentine Floyd-Steinberg diffusion on the right.
 
 Additional examples cover each built-in effect in the [`examples`](./examples/)
 directory.
