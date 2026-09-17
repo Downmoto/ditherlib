@@ -76,7 +76,7 @@ impl Polygon {
     }
 
     /// Creates a perfect square centred on a specific point.
-    pub fn centered_square(centre: Point, size: f32) -> Result<Self> {
+    pub fn centred_square(centre: Point, size: f32) -> Result<Self> {
         let half = size * 0.5;
         Self::new([
             Point::new(centre.x - half, centre.y - half),
@@ -125,6 +125,8 @@ pub enum Selection {
     All,
     /// Selects the area covered by a polygon.
     Polygon(Polygon),
+    /// Selects coverage supplied by a custom mask.
+    Mask(Mask),
 }
 
 impl Selection {
@@ -137,7 +139,8 @@ impl Selection {
     /// # Errors
     ///
     /// Returns [`ErrorKind::DimensionMismatch`] when the dimensions cannot be
-    /// represented by a mask on the current platform.
+    /// represented by a mask on the current platform or a custom mask has
+    /// different dimensions.
     pub fn rasterise(&self, width: u32, height: u32) -> Result<Mask> {
         let length = mask_length(width, height)?;
 
@@ -159,6 +162,11 @@ impl Selection {
                     coverage_bounds,
                 })
             }
+            Self::Mask(mask) if mask.dimensions() != (width, height) => Err(DitherError::new(
+                ErrorKind::DimensionMismatch,
+                "selection mask dimensions do not match the source image",
+            )),
+            Self::Mask(mask) => Ok(mask.clone()),
         }
     }
 }
@@ -464,6 +472,18 @@ mod tests {
                 .is_some_and(|coverage| coverage > 0 && coverage < 255)
         );
         assert_eq!(mask.coverage(3, 3), Some(0));
+    }
+
+    #[test]
+    fn rasterises_custom_masks_with_matching_dimensions() {
+        let mask = Mask::new(2, 1, vec![0, 128]).unwrap();
+        let rasterised = Selection::Mask(mask.clone()).rasterise(2, 1).unwrap();
+
+        assert_eq!(rasterised, mask);
+        assert_eq!(
+            Selection::Mask(mask).rasterise(1, 2).unwrap_err().kind(),
+            ErrorKind::DimensionMismatch
+        );
     }
 
     #[test]

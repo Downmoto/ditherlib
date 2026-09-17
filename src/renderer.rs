@@ -1,7 +1,10 @@
 use crate::{Mask, Pipeline, Result, Selection, SourceImage};
 
 /// An image effect that can be evaluated by a [`Renderer`].
-pub trait Effect {
+///
+/// Effects are safe to move and share between threads so pipelines retain
+/// those properties.
+pub trait Effect: Send + Sync {
     /// Writes effected RGBA8 pixels into `output`.
     ///
     /// `input` and `output` contain four row-major bytes per pixel and have the
@@ -101,7 +104,7 @@ impl Renderer {
     pub fn render(
         &mut self,
         source: &SourceImage,
-        effect: &impl Effect,
+        effect: &dyn Effect,
         selection: &Selection,
     ) -> Result<RenderedImage> {
         let dimensions = source.dimensions();
@@ -152,7 +155,7 @@ impl Renderer {
         self.scratch.extend_from_slice(&self.current);
 
         effect.apply(&self.current, &mut self.scratch, dimensions, &mask)?;
-        if matches!(selection, Selection::Polygon(_)) {
+        if !matches!(selection, Selection::All) {
             composite_selection(&self.current, &mut self.scratch, &mask);
         }
         std::mem::swap(&mut self.current, &mut self.scratch);
@@ -208,8 +211,10 @@ fn blend(input: u8, effected: u8, coverage: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{Effect, Renderer};
-    use crate::{DitherError, ErrorKind, Pipeline, Point, Polygon, Result, Selection, SourceImage};
-    use std::{cell::RefCell, rc::Rc};
+    use crate::{
+        DitherError, ErrorKind, Mask, Pipeline, Point, Polygon, Result, Selection, SourceImage,
+    };
+    use std::sync::{Arc, Mutex};
 
     struct PaintRed;
 
@@ -300,7 +305,7 @@ mod tests {
         }
     }
 
-    struct RecordBuffers(Rc<RefCell<Vec<(usize, usize)>>>);
+    struct RecordBuffers(Arc<Mutex<Vec<(usize, usize)>>>);
 
     impl Effect for RecordBuffers {
         fn apply(
@@ -311,7 +316,8 @@ mod tests {
             _mask: &crate::Mask,
         ) -> Result<()> {
             self.0
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push((input.as_ptr() as usize, output.as_ptr() as usize));
             Ok(())
         }
@@ -392,6 +398,18 @@ mod tests {
     }
 
     #[test]
+    fn renders_with_a_custom_mask() {
+        let source = source(2, 1, &[[0, 0, 0, 0]; 2]);
+        let mask = Mask::new(2, 1, vec![0, 128]).unwrap();
+        let rendered = Renderer::new()
+            .render(&source, &PaintRed, &Selection::Mask(mask))
+            .unwrap();
+
+        assert_eq!(rendered.pixel(0, 0), Some([0, 0, 0, 0]));
+        assert_eq!(rendered.pixel(1, 0), Some([128, 0, 0, 128]));
+    }
+
+    #[test]
     fn propagates_effect_errors() {
         let source = source(1, 1, &[[0, 0, 0, 255]]);
         let error = Renderer::new()
@@ -451,15 +469,15 @@ mod tests {
     #[test]
     fn alternates_buffers_for_odd_and_even_step_counts() {
         let source = source(1, 1, &[[10, 20, 30, 255]]);
-        let records = Rc::new(RefCell::new(Vec::new()));
+        let records = Arc::new(Mutex::new(Vec::new()));
         let mut pipeline = Pipeline::new();
         for _ in 0..3 {
-            pipeline.add(RecordBuffers(Rc::clone(&records)), Selection::All);
+            pipeline.add(RecordBuffers(Arc::clone(&records)), Selection::All);
         }
 
         let mut renderer = Renderer::new();
         renderer.render_pipeline(&source, &pipeline).unwrap();
-        let odd = records.borrow();
+        let odd = records.lock().unwrap();
         assert_eq!(odd.len(), 3);
         assert_ne!(odd[0].0, odd[0].1);
         assert_eq!(odd[0].1, odd[1].0);
@@ -467,9 +485,9 @@ mod tests {
         drop(odd);
 
         pipeline.remove(2).unwrap();
-        records.borrow_mut().clear();
+        records.lock().unwrap().clear();
         renderer.render_pipeline(&source, &pipeline).unwrap();
-        let even = records.borrow();
+        let even = records.lock().unwrap();
         assert_eq!(even.len(), 2);
         assert_ne!(even[0].0, even[0].1);
         assert_eq!(even[0].1, even[1].0);

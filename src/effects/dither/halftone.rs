@@ -20,9 +20,6 @@ pub enum HalftoneShape {
     Cross,
 }
 
-/// Short alias for [`HalftoneShape`].
-pub type DotShape = HalftoneShape;
-
 /// Applies an image-origin-anchored halftone screen.
 ///
 /// Screen angle is measured clockwise in radians. Phase is measured in image
@@ -216,9 +213,6 @@ pub enum ColourHalftoneMode {
     Cmyk,
 }
 
-/// Short alias for [`ColourHalftoneMode`].
-pub type ChannelMode = ColourHalftoneMode;
-
 /// A channel that can have an independent halftone angle and offset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -238,9 +232,6 @@ pub enum HalftoneChannel {
     /// Subtractive black.
     Black,
 }
-
-/// Short alias for [`HalftoneChannel`].
-pub type ColourChannel = HalftoneChannel;
 
 /// A standard set of CMYK screen angles.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

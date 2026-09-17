@@ -10,12 +10,11 @@ mod renderer;
 mod selection;
 
 pub use effects::{
-    Blur, ChannelMode, CmykScreenPreset, Color, Colour, ColourChannel, ColourHalftone,
-    ColourHalftoneMode, ColourSpace, DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel,
-    DiffusionScan, DiffusionTap, DotShape, ErrorDiffusion, Greyscale, Halftone, HalftoneChannel,
-    HalftoneShape, NoiseAlgorithm, NoiseDither, OrderedDither, OstromoukhovDither, Palette,
-    PaletteMatchMode, PaletteSize, RiemersmaDither, SamplingMode, Threshold, ThresholdMap,
-    ThresholdRotation,
+    Blur, CmykScreenPreset, Color, Colour, ColourHalftone, ColourHalftoneMode, ColourSpace,
+    DiffusionAlgorithm, DiffusionErrorMode, DiffusionKernel, DiffusionScan, DiffusionTap,
+    ErrorDiffusion, Greyscale, Halftone, HalftoneChannel, HalftoneShape, NoiseAlgorithm,
+    NoiseDither, OrderedDither, OstromoukhovDither, Palette, PaletteMatchMode, PaletteSize,
+    RiemersmaDither, SamplingMode, Threshold, ThresholdMap, ThresholdRotation,
 };
 pub use io::{read, write};
 pub use pipeline::{Pipeline, PipelineStep};
@@ -136,6 +135,37 @@ pub struct SourceImage {
 }
 
 impl SourceImage {
+    /// Creates an image from row-major RGBA8 pixel bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::DimensionMismatch`] when the number of bytes does
+    /// not equal `width * height * 4` or the dimensions exceed platform limits.
+    pub fn from_rgba8(width: u32, height: u32, pixels: impl Into<Box<[u8]>>) -> Result<Self> {
+        let pixels = pixels.into();
+        let expected_length = usize::try_from(width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(4));
+
+        if expected_length != Some(pixels.len()) {
+            return Err(DitherError::new(
+                ErrorKind::DimensionMismatch,
+                "image dimensions do not match its RGBA8 byte length",
+            ));
+        }
+
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
     /// Returns the image width in pixels.
     pub const fn width(&self) -> u32 {
         self.width
@@ -184,8 +214,26 @@ impl fmt::Debug for SourceImage {
 
 #[cfg(test)]
 mod tests {
-    use super::{ErrorKind, read};
+    use super::{ErrorKind, SourceImage, read};
     use std::path::Path;
+
+    #[test]
+    fn creates_an_image_from_rgba8_bytes() {
+        let image = SourceImage::from_rgba8(2, 1, [1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+
+        assert_eq!(image.dimensions(), (2, 1));
+        assert_eq!(image.pixel(0, 0), Some([1, 2, 3, 4]));
+        assert_eq!(image.pixel(1, 0), Some([5, 6, 7, 8]));
+    }
+
+    #[test]
+    fn rejects_mismatched_rgba8_dimensions() {
+        let error = SourceImage::from_rgba8(2, 1, [0; 7]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::DimensionMismatch);
+
+        let error = SourceImage::from_rgba8(u32::MAX, u32::MAX, []).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::DimensionMismatch);
+    }
 
     #[cfg(feature = "jpeg")]
     #[test]

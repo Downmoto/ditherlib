@@ -1,8 +1,8 @@
 # Ditherlib
 
 Ditherlib is a Rust library for non-destructive image effects and dithering.
-Effects can target an entire image or anti-aliased polygon selections, and an
-ordered pipeline can combine several selected effects into one render.
+Effects can target an entire image, an anti-aliased polygon, or a custom mask,
+and an ordered pipeline can combine several selected effects into one render.
 
 Source pixels remain immutable after loading. Each render starts from the
 source and produces a separately owned image, so callers can freely edit and
@@ -29,7 +29,7 @@ re-render pipelines.
 - Palette derivation from source-image colours with an optional size limit
 - RGB, linear RGB, and Oklab palette matching with luminance-only control
 - Rectangular logical pixels with grid offsets and five sampling modes
-- Whole-image and polygon selections with anti-aliased edges
+- Whole-image, polygon, and custom-mask selections with anti-aliased edges
 - Ordered multi-effect pipelines with reusable rendering buffers
 - Crate-owned image, result, and error types
 
@@ -73,7 +73,7 @@ fn main() -> ditherlib::Result<()> {
     let height = source.height() as f32;
 
     let centre = Point::new(width * 0.5, height * 0.5);
-    let area = Polygon::centered_square(centre, width / 1.50)?;
+    let area = Polygon::centred_square(centre, width / 1.50)?;
 
     let mut pipeline = Pipeline::new();
     pipeline.add(Greyscale, Selection::All);

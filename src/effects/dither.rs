@@ -15,8 +15,7 @@ pub use diffusion::{
     ErrorDiffusion,
 };
 pub use halftone::{
-    ChannelMode, CmykScreenPreset, ColourChannel, ColourHalftone, ColourHalftoneMode, DotShape,
-    Halftone, HalftoneChannel, HalftoneShape,
+    CmykScreenPreset, ColourHalftone, ColourHalftoneMode, Halftone, HalftoneChannel, HalftoneShape,
 };
 pub use noise::{NoiseAlgorithm, NoiseDither};
 pub use ostromoukhov::OstromoukhovDither;

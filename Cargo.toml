@@ -2,7 +2,7 @@
 name = "ditherlib"
 version = "0.9.1"
 edition = "2024"
-description = "Non-destructive image effects and dithering for whole images and polygon selections"
+description = "Non-destructive image effects and dithering for whole images and custom selections"
 documentation = "https://docs.rs/ditherlib"
 license = "Apache-2.0"
 repository = "https://github.com/Downmoto/ditherlib"
