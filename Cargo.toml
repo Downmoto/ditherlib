@@ -35,7 +35,7 @@ webp = ["image/webp"]
 image = { version = "0.25.10", default-features = false }
 
 [dev-dependencies]
-criterion = { version = "0.8.2", default-features = false }
+criterion = { version = "0.8.2", default-features = false, features = ["html_reports", "plotters"] }
 
 [[bench]]
 name = "benchmarks"

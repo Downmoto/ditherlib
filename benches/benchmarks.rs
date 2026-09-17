@@ -14,8 +14,7 @@ criterion_group! {
     config = Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(100))
-        .measurement_time(Duration::from_millis(250))
-        .without_plots();
+        .measurement_time(Duration::from_millis(250));
     targets = effects::benchmarks, composition::benchmarks
 }
 criterion_main!(benches);

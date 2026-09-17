@@ -32,13 +32,16 @@ cargo bench -- --save-baseline main
 cargo bench -- --baseline main
 ```
 
+The complete HTML report is written to `target/criterion/report/index.html`.
+Open that file in a browser after the run finishes.
+
 Do not compare absolute timings from different machines. Compiler version,
 target architecture, power state, and background work can all affect results.
 
 ## Harness configuration
 
-The suite uses Criterion 0.8 with plots and its optional parallel executor
-disabled. Each benchmark uses:
+The suite uses Criterion 0.8 with HTML reports enabled through the Plotters
+backend and its optional parallel executor disabled. Each benchmark uses:
 
 | Setting | Value |
 | --- | ---: |
