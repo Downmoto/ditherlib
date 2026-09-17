@@ -194,9 +194,10 @@ fn main() -> ditherlib::Result<()> {
 }
 ```
 
-Run `cargo run --example halftone_contact_sheet -- INPUT OUTPUT.png` to render
-all six shapes. `Palette::black_and_white()` produces classic monochrome output;
-other built-in or custom palettes produce colour screens.
+Run `cargo run --example halftone -- INPUT OUTPUT_DIRECTORY` to render
+monochrome and colour halftone examples. `Palette::black_and_white()` produces
+classic monochrome output; other built-in or custom palettes produce colour
+screens.
 
 ### Colour halftoning
 
@@ -225,8 +226,7 @@ Angles are clockwise radians in the API. Offsets use pixels along each rotated
 screen's axes. Absolute image coordinates and stateless thresholding make the
 same configuration deterministic across repeated renders and selections.
 
-Run `cargo run --example colour_print_comparison -- INPUT OUTPUT.png` for a
-source, RGB, and CMYK comparison. Tiles retain the source aspect ratio.
+The `halftone` example renders its colour output using CMYK separations.
 
 ## Palettes
 
@@ -432,60 +432,18 @@ JPEG output discards alpha because the format does not support transparency.
 
 ## Examples
 
-Every example accepts an input path and output path:
+Every example accepts an input path and output directory. The directory is
+created when necessary, and each example writes descriptively named PNG files:
 
 ```sh
-cargo run --release --example pipeline -- input.jpg output.png
-cargo run --release --example polygon_pipeline -- input.jpg output.png
-cargo run --release --example diffusion_comparison -- input.jpg comparison-{1,2,3,4,5,6,7}.png
-cargo run --release --example diffusion_controls -- input.jpg strengths.png clamps.png
-cargo run --release --example ordered_comparison -- input.jpg maps.png strengths.png rotations.png
-cargo run --release --example pattern_sheet -- input.jpg patterns.png
-cargo run --release --example noise_comparison -- input.jpg noise.png
-cargo run --release --example palette_comparison -- input.jpg palettes.png
-cargo run --release --example palette_matching_comparison -- input.jpg matching.png
-cargo run --release --example pixel_sampling_comparison -- input.jpg sampling.png shapes.png
-cargo run --release --example riemersma_comparison -- input.jpg comparison.png
-cargo run --release --example adaptive_diffusion_comparison -- input.jpg comparison.png
+cargo run --release --example quick_start -- input.jpg output
+cargo run --release --example ordered_dither -- input.jpg output
+cargo run --release --example error_diffusion -- input.jpg output
+cargo run --release --example halftone -- input.jpg output
+cargo run --release --example palettes -- input.jpg output
+cargo run --release --example selections -- input.jpg output
+cargo run --release --example pipeline -- input.jpg output
+cargo run --release --example comparison -- input.jpg output
 ```
 
-The diffusion comparison requires an image with an even width and creates seven
-side-by-side comparisons. From `comparison-1.png` through `comparison-7.png`,
-the left/right pairs are Floyd-Steinberg/Atkinson,
-Jarvis-Judice-Ninke/Stucki, Burkes/Sierra, Two-Row Sierra/Sierra Lite, False
-Floyd-Steinberg/Fan, Shiau-Fan/Shiau-Fan 2, and
-Stevenson-Arce/Two-dimensional Knuth.
-
-The diffusion controls example creates two quadrant comparisons. `strengths.png`
-uses strengths 0.0, 0.5, 1.0, and 1.5 from top-left to bottom-right.
-`clamps.png` uses error limits of 0, 24, 64, and unlimited in the same order.
-
-The ordered comparison creates three quadrant images. `maps.png` compares Bayer
-2x2, 4x4, and 8x8 with a custom 3x2 map. `strengths.png` compares 0.25, 0.5,
-1.0, and 1.5. `rotations.png` compares 0, 90, 180, and 270 degrees clockwise.
-
-The pattern sheet creates a labelled grid containing one result for each
-artistic threshold-map preset.
-
-The noise comparison applies white noise to the left half and blue noise to
-the right half with the same seed and strength.
-
-The palette comparison uses greyscale, Game Boy, CGA, and PICO-8 from top-left
-to bottom-right. It applies Floyd-Steinberg diffusion with serpentine scanning
-to every quadrant so the palette is the only variable.
-
-The palette-matching comparison keeps the source in the top-left quadrant and
-uses RGB, linear RGB, and Oklab matching in the remaining quadrants in reading
-order. Every processed quadrant uses the same PICO-8 palette.
-
-The pixel-sampling comparison creates five vertical sampling bands and a
-second image comparing square, wide, tall, and offset-square logical pixels.
-
-The Riemersma comparison places Hilbert-curve diffusion on the left and
-serpentine Floyd-Steinberg diffusion on the right.
-
-The adaptive diffusion comparison places Ostromoukhov diffusion on the left
-and fixed-kernel serpentine Floyd-Steinberg diffusion on the right.
-
-Additional examples cover each built-in effect in the [`examples`](./examples/)
-directory.
+See the [`examples`](./examples/) directory for the complete source.
