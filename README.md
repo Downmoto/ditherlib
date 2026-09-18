@@ -1,455 +1,222 @@
 # Ditherlib
 
+[![Crates.io](https://img.shields.io/crates/v/ditherlib.svg)](https://crates.io/crates/ditherlib)
+[![Documentation](https://docs.rs/ditherlib/badge.svg)](https://docs.rs/ditherlib)
+[![Rust CI](https://github.com/Downmoto/ditherlib/actions/workflows/ci.yml/badge.svg)](https://github.com/Downmoto/ditherlib/actions/workflows/ci.yml)
+[![Licence](https://img.shields.io/crates/l/ditherlib.svg)](https://github.com/Downmoto/ditherlib/blob/master/LICENSE)
+
 Ditherlib is a Rust library for non-destructive image effects and dithering.
-Effects can target an entire image, an anti-aliased polygon, or a custom mask,
-and an ordered pipeline can combine several selected effects into one render.
+Apply an effect to a whole image, a polygon, or a custom mask, then combine
+effects in an ordered pipeline when one pass is not enough.
 
-Source pixels remain immutable after loading. Each render starts from the
-source and produces a separately owned image, so callers can freely edit and
-re-render pipelines.
+![Ditherlib effect showcase](https://raw.githubusercontent.com/Downmoto/ditherlib/master/assets/samurai_showcase.jpg)
 
-![samurai](https://raw.githubusercontent.com/Downmoto/ditherlib/master/assets/samurai_showcase.jpg "showcase")
+## Table of contents
 
-## Features
-
-- Greyscale and Gaussian blur
-- Threshold, configurable ordered, and deterministic noise dithering
-- Print-style halftone screens with six dot shapes and arbitrary palettes
-- Independently angled RGB and CMYK process-print screens
-- Fourteen error-diffusion presets, from minimal Two-dimensional Knuth through
-  broad Stevenson-Arce
-- Custom diffusion kernels, strength, clamping, and scan direction
-- Tone-adaptive Ostromoukhov diffusion with published variable coefficients
-- Hilbert-curve Riemersma dithering with configurable history and decay
-- Bayer, clustered-dot, line, crosshatch, checkerboard, and dispersed-dot
-  threshold maps
-- Built-in 16x16 blue-noise threshold map
-- Custom rectangular threshold maps with strength, offset, rotation, and mirroring
-- Custom RGB palettes, black-and-white palettes, and monochrome palettes
-- Palette derivation from source-image colours with an optional size limit
-- RGB, linear RGB, and Oklab palette matching with luminance-only control
-- Rectangular logical pixels with grid offsets and five sampling modes
-- Whole-image, polygon, and custom-mask selections with anti-aliased edges
-- Ordered multi-effect pipelines with reusable rendering buffers
-- Crate-owned image, result, and error types
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Core concepts](#core-concepts)
+- [Effect catalogue](#effect-catalogue)
+- [Palettes](#palettes)
+- [Selections](#selections)
+- [Pipelines](#pipelines)
+- [Codec features](#codec-features)
+- [Examples](#examples)
+- [Benchmarks](#benchmarks)
+- [Minimum supported Rust version](#minimum-supported-rust-version)
+- [Errors](#errors)
+- [Licence](#licence)
 
 ## Installation
 
-```bash
+```sh
 cargo add ditherlib
 ```
-JPEG and PNG support are enabled by default:
+
+Or add Ditherlib directly to `Cargo.toml`:
 
 ```toml
 [dependencies]
 ditherlib = "0.9"
 ```
 
-Codec features can be selected individually:
+JPEG and PNG support are enabled by default. See [Codec features](#codec-features)
+to select other formats.
+
+## Quick start
+
+Read an image, apply a black-and-white threshold, and write the result:
+
+```rust,no_run
+use ditherlib::{
+    Renderer, Selection,
+    effects::dither::{palette::Palette, threshold::Threshold},
+    read, write,
+};
+
+fn main() -> ditherlib::Result<()> {
+    let source = read("input.jpg")?;
+    let effect = Threshold::new(Palette::black_and_white());
+    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
+
+    write("output.png", &rendered)
+}
+```
+
+The [`quick_start` example](https://github.com/Downmoto/ditherlib/blob/master/examples/quick_start.rs)
+is the runnable version.
+
+## Core concepts
+
+- `SourceImage` owns immutable RGBA8 source pixels. Load one with `read`, or
+  construct one from decoded pixels with `SourceImage::from_rgba8`.
+- An `Effect` describes one transformation. Effects can be reused across
+  renders and configured through builder methods.
+- A `Selection` limits an effect to the whole image, an anti-aliased polygon,
+  or a custom coverage mask.
+- `Renderer` applies effects and returns an owned `RenderedImage`. Reusing a
+  renderer also reuses its internal working buffers.
+- `Pipeline` applies several selected effects in order. Every render begins
+  from the unchanged source image.
+
+The [`prelude`](https://docs.rs/ditherlib/latest/ditherlib/prelude/index.html)
+collects common imports. Specific imports remain available under their effect
+families, such as `effects::dither::diffusion::ErrorDiffusion`.
+
+## Effect catalogue
+
+| Effect | Purpose |
+| --- | --- |
+| [`Greyscale`](https://docs.rs/ditherlib/latest/ditherlib/effects/greyscale/struct.Greyscale.html) | Convert RGB pixels to greyscale while preserving alpha. |
+| [`Blur`](https://docs.rs/ditherlib/latest/ditherlib/effects/blur/struct.Blur.html) | Apply Gaussian blur with a configurable sigma. |
+| [`Threshold`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/threshold/struct.Threshold.html) | Map sampled logical pixels directly to a palette. |
+| [`OrderedDither`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/threshold/struct.OrderedDither.html) | Dither with Bayer, artistic, blue-noise, or custom threshold maps. |
+| [`NoiseDither`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/noise/struct.NoiseDither.html) | Apply deterministic white-noise or blue-noise dithering. |
+| [`Halftone`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/halftone/struct.Halftone.html) | Render a palette through geometric print-style screens. |
+| [`ColourHalftone`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/halftone/struct.ColourHalftone.html) | Screen RGB or CMYK channels independently. |
+| [`ErrorDiffusion`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/diffusion/struct.ErrorDiffusion.html) | Use one of fourteen diffusion presets or a custom kernel. |
+| [`OstromoukhovDither`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/ostromoukhov/struct.OstromoukhovDither.html) | Apply tone-adaptive variable-coefficient diffusion. |
+| [`RiemersmaDither`](https://docs.rs/ditherlib/latest/ditherlib/effects/dither/riemersma/struct.RiemersmaDither.html) | Diffuse error along a Hilbert curve. |
+
+Threshold, ordered, noise, error-diffusion, Ostromoukhov, and Riemersma
+effects share logical-pixel sizing, grid offsets, and sampling controls. The
+API documentation covers every parameter and validation rule.
+
+## Palettes
+
+`Palette` includes black-and-white, greyscale, Game Boy, CGA, PICO-8, and
+monochrome presets. You can also supply custom colours or derive a palette from
+a source image:
+
+```rust,no_run
+use ditherlib::{SourceImage, effects::dither::palette::{Palette, PaletteSize}};
+
+fn palette_from(source: &SourceImage) -> ditherlib::Result<Palette> {
+    Palette::from_source(source, PaletteSize::Limited(16))
+}
+```
+
+Palette matching supports gamma-encoded RGB, linear RGB, and Oklab colour
+spaces, with full-colour or luminance-only matching. See the
+[`palettes` example](https://github.com/Downmoto/ditherlib/blob/master/examples/palettes.rs)
+for built-in, custom, derived, and perceptual palettes.
+
+## Selections
+
+Use `Selection::All` for the whole image, `Selection::Polygon` for an
+anti-aliased geometric region, or `Selection::Mask` for custom per-pixel
+coverage. Polygons can be rectangles, centred squares, regular polygons, or
+arbitrary validated vertices.
+
+The [`selections` example](https://github.com/Downmoto/ditherlib/blob/master/examples/selections.rs)
+shows whole-image and polygon rendering.
+
+## Pipelines
+
+A pipeline applies effects in insertion order, so each step receives the
+result of the previous step:
+
+```rust,no_run
+use ditherlib::{Pipeline, Renderer, Selection, SourceImage};
+use ditherlib::effects::{
+    blur::Blur,
+    dither::{palette::Palette, threshold::{OrderedDither, ThresholdMap}},
+    greyscale::Greyscale,
+};
+
+fn render(source: &SourceImage) -> ditherlib::Result<()> {
+    let mut pipeline = Pipeline::new();
+    pipeline.add(Greyscale, Selection::All);
+    pipeline.add(
+        OrderedDither::new(Palette::black_and_white(), ThresholdMap::bayer_4x4())
+            .with_pixel_size(4, 4)?,
+        Selection::All,
+    );
+    pipeline.add(Blur::new(1.5)?, Selection::All);
+
+    Renderer::new().render_pipeline(source, &pipeline)?;
+    Ok(())
+}
+```
+
+See the runnable [`pipeline` example](https://github.com/Downmoto/ditherlib/blob/master/examples/pipeline.rs).
+
+## Codec features
+
+The default `jpeg` and `png` features can be replaced with any supported image
+codecs:
 
 ```toml
 [dependencies]
 ditherlib = { version = "0.9", default-features = false, features = ["png", "webp"] }
 ```
 
-Available codec features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`,
-`ico`, `jpeg`, `png`, `pnm`, `qoi`, `tga`, `tiff`, and `webp`. The processing
-algorithms compile without any codec features.
-
-## Usage
-
-This example converts the full image to greyscale, then applies a red
-monochrome ordered dither inside a polygon:
-
-```rust,no_run
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let source = read("input.jpg")?;
-    let width = source.width() as f32;
-    let height = source.height() as f32;
-
-    let centre = Point::new(width * 0.5, height * 0.5);
-    let area = Polygon::centred_square(centre, width / 1.50)?;
-
-    let mut pipeline = Pipeline::new();
-    pipeline.add(Greyscale, Selection::All);
-    pipeline.add(
-        OrderedDither::new(
-            Palette::monochrome(Colour::RED),
-            ThresholdMap::bayer_4x4(),
-        )
-            .with_pixel_size(4, 4)?,
-        Selection::Polygon(area),
-    );
-
-    let rendered = Renderer::new().render_pipeline(&source, &pipeline)?;
-    write("output.png", &rendered)
-}
-```
-
-Pipeline order matters. Each step receives the result of the previous step,
-including where polygon selections overlap. Rendering the same pipeline again
-always begins from the unchanged `SourceImage`.
-
-## Logical pixel geometry and sampling
-
-Threshold, ordered, noise, error-diffusion, Ostromoukhov, and Riemersma effects
-share the same logical pixel controls. Width and height use image pixels, and
-signed grid offsets move the grid right and down for positive values.
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let effect = Threshold::new(Palette::pico_8())
-        .with_pixel_size(12, 6)?
-        .with_grid_offset(3, -2)
-        .with_sampling(SamplingMode::DominantColour);
-    assert_eq!(effect.pixel_size(), (12, 6));
-    assert_eq!(effect.grid_offset(), (3, -2));
-    Ok(())
-}
-```
-
-`SamplingMode` provides coverage-weighted average, centre, darkest, lightest,
-and coverage-weighted dominant-colour sampling. Centre sampling uses the
-selected source pixel nearest the centre of the image-clipped cell. Darkest and
-lightest use RGB luma. Equal dominant-colour coverage resolves to the colour
-encountered first. Every mode samples only pixels covered by the active
-selection, including anti-aliased polygon intersections and partial cells at
-image edges.
-
-## Ordered dithering
-
-`ThresholdMap` provides standard Bayer 2x2, 4x4, and 8x8 maps and validates
-custom rectangular maps. Custom values are row-major ranks from zero up to one
-less than the map length; repeated ranks are allowed.
-
-Artistic presets are available through `ThresholdMap::clustered_dots()`,
-`horizontal_lines()`, `vertical_lines()`, `diagonal_lines()`, `crosshatch()`,
-`checkerboard()`, `dispersed_dots_3x3()`, and `dispersed_dots_5x5()`. They tile
-at the image origin and support the same strength, offset, rotation, and
-mirroring controls as Bayer and custom maps.
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let map = ThresholdMap::new(3, 2, [0, 3, 1, 4, 2, 5])?;
-    let effect = OrderedDither::new(Palette::black_and_white(), map)
-        .with_strength(0.75)?
-        .with_offset(1, 0)
-        .with_rotation(ThresholdRotation::Clockwise90)
-        .with_mirroring(true, false);
-    assert_eq!(effect.offset(), (1, 0));
-    Ok(())
-}
-```
-
-Offsets use logical pixels and move the map right and down for positive values.
-Rotation is clockwise. Mirroring applies horizontally and vertically after
-rotation. Every transformation remains anchored to the image origin when an
-effect targets a polygon.
-
-## Noise dithering
-
-`NoiseDither` provides deterministic white-noise and blue-noise threshold
-dithering. Its samples are driven by image-origin logical pixel coordinates
-and the seed, so rendering a polygon selection does not shift the noise field.
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let effect = NoiseDither::new(Palette::black_and_white(), NoiseAlgorithm::Blue)
-        .with_seed(67)
-        .with_strength(0.85)?
-        .with_pixel_size(2, 2)?;
-    assert_eq!(effect.seed(), 67);
-    Ok(())
-}
-```
-
-The fixed map is also available as `ThresholdMap::blue_noise_16x16()` for
-ordered dithering and custom transformations.
-
-## Halftone screens
-
-`Halftone` provides circle, square, diamond, ellipse, line, and cross screens.
-Cell dimensions and phase use image pixels, while angles use clockwise radians.
-The screen remains anchored to the image origin when used with a selection.
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let effect = Halftone::new(Palette::monochrome(Colour::RED), HalftoneShape::Ellipse)
-        .with_cell_size(12, 8)?
-        .with_angle(std::f32::consts::FRAC_PI_6)?
-        .with_phase(2.0, -1.0)?
-        .with_scale(0.9)?;
-    assert_eq!(effect.cell_width(), 12);
-    Ok(())
-}
-```
-
-Run `cargo run --example halftone -- INPUT OUTPUT_DIRECTORY` to render
-monochrome and colour halftone examples. `Palette::black_and_white()` produces
-classic monochrome output; other built-in or custom palettes produce colour
-screens.
-
-### Colour halftoning
-
-`ColourHalftone` screens colour separations independently. RGB mode thresholds
-the red, green, and blue light channels and recombines them directly. CMYK mode
-uses under-colour removal to separate cyan, magenta, yellow, and black inks,
-screens each ink, then recombines the subtractive channels into RGB output.
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let effect = ColourHalftone::new(ColourHalftoneMode::Cmyk, HalftoneShape::Circle)
-        .with_cell_size(10, 10)?
-        .with_cmyk_preset(CmykScreenPreset::Traditional)?
-        .with_channel_angle(HalftoneChannel::Black, std::f32::consts::FRAC_PI_4)?
-        .with_channel_offset(HalftoneChannel::Yellow, 1.0, 0.5)?;
-    assert_eq!(effect.channel_offset(HalftoneChannel::Yellow), Some((1.0, 0.5)));
-    Ok(())
-}
-```
-
-The traditional CMYK preset uses 15° cyan, 75° magenta, 0° yellow, and 45°
-black screens. The moiré-resistant preset uses 18.4°, 71.6°, 0°, and 45°.
-Angles are clockwise radians in the API. Offsets use pixels along each rotated
-screen's axes. Absolute image coordinates and stateless thresholding make the
-same configuration deterministic across repeated renders and selections.
-
-The `halftone` example renders its colour output using CMYK separations.
-
-## Palettes
-
-`Palette::black_and_white()` provides the familiar two-colour palette.
-`Palette::monochrome(colour)` combines black, the supplied RGB colour, and
-white. Eight-level greyscale, Game Boy, CGA, and PICO-8 palettes are also
-available through `Palette::greyscale()`, `Palette::game_boy()`,
-`Palette::cga()`, and `Palette::pico_8()`.
-
-`Colour` represents an RGB value with named channels, common colour constants,
-and conversions to and from `[u8; 3]`. `Color` is an alias for callers using
-American spelling. `Palette::new` accepts either representation:
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let palette = Palette::new([
-        Colour::BLACK,
-        Colour::new(220, 20, 60),
-        Colour::WHITE,
-    ])?;
-    assert_eq!(palette.colours().len(), 3);
-    Ok(())
-}
-```
-
-Palettes can also be derived from the visible pixels in a source image.
-`PaletteSize::All` retains every distinct colour in first-seen order.
-`PaletteSize::Limited(n)` applies deterministic, frequency-weighted median cut
-and chooses representatives that occur in the source. Fully transparent pixels
-do not contribute colours.
-
-```rust,no_run
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let source = read("input.png")?;
-    let palette = Palette::from_source(&source, PaletteSize::Limited(16))?;
-    let effect = Threshold::new(palette);
-    assert!(effect.palette().colours().len() <= 16);
-    Ok(())
-}
-```
-
-### Perceptual palette matching
-
-Palettes use gamma-encoded RGB distance by default, preserving the matching and
-rendered output from earlier releases. `ColourSpace::LinearRgb` compares
-linear-light channels, while `ColourSpace::Oklab` compares perceptual lightness
-and opponent colour components. Every palette-based effect uses the palette's
-configured space.
-
-```rust
-use ditherlib::prelude::*;
-
-let palette = Palette::pico_8()
-    .with_colour_space(ColourSpace::Oklab)
-    .with_matching_mode(PaletteMatchMode::Colour);
-assert_eq!(palette.colour_space(), ColourSpace::Oklab);
-```
-
-`PaletteMatchMode::Luminance` compares only gamma-encoded luma in RGB, physical
-relative luminance in linear RGB, or Oklab lightness. Palette order resolves
-equal distances.
-
-Error diffusion calculates and distributes errors in the palette's colour
-space. Independent-channel diffusion is the default. Luminance mode propagates
-brightness error while leaving chroma error local:
-
-```rust
-use ditherlib::prelude::*;
-
-let effect = ErrorDiffusion::new(
-    Palette::pico_8().with_colour_space(ColourSpace::Oklab),
-    DiffusionAlgorithm::FloydSteinberg,
-)
-.with_error_mode(DiffusionErrorMode::Luminance);
-assert_eq!(effect.error_mode(), DiffusionErrorMode::Luminance);
-```
-
-The palette stores converted entries when its colour space is selected. The
-sRGB transfer constants follow [CSS Color 4](https://www.w3.org/TR/css-color-4/#color-conversion-code),
-and the Oklab matrices follow [Björn Ottosson's reference transform](https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab).
-
-## Error diffusion
-
-`ErrorDiffusion` accepts a built-in algorithm or a validated custom kernel. It
-supports raster or serpentine scanning, diffusion strength from `0.0` through
-`2.0`, and optional per-channel error clamping.
-
-```rust,no_run
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let source = read("input.png")?;
-    let effect = ErrorDiffusion::new(Palette::black_and_white(), DiffusionAlgorithm::Stucki)
-        .with_scan(DiffusionScan::Serpentine)
-        .with_pixel_size(2, 2)?;
-    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
-    write("output.png", &rendered)
-}
-```
-
-Custom kernels contain forward-pointing weighted taps and a divisor:
-
-```rust
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let kernel = DiffusionKernel::new(
-        [
-            DiffusionTap::new(1, 0, 7),
-            DiffusionTap::new(-1, 1, 3),
-            DiffusionTap::new(0, 1, 5),
-            DiffusionTap::new(1, 1, 1),
-        ],
-        16,
-    )?;
-    let effect = ErrorDiffusion::new(Palette::black_and_white(), kernel)
-        .with_strength(0.75)?
-        .with_error_clamp(48);
-    assert_eq!(effect.strength(), 0.75);
-    Ok(())
-}
-```
-
-Built-in presets have distinct grain and edge behaviour:
-
-| Preset | Visual character |
-| --- | --- |
-| Floyd-Steinberg | Crisp, balanced detail with a familiar fine grain |
-| Atkinson | High contrast with clean highlights, shadows, and clustered dots |
-| Jarvis-Judice-Ninke | Soft, finely dispersed grain with smooth tonal changes |
-| Stucki | Sharp detail with broad, even error distribution |
-| Burkes | Clean two-row texture with less softness than Stucki |
-| Sierra | Smooth, balanced grain with gentle transitions |
-| Two-Row Sierra | Compact, moderately crisp grain |
-| Sierra Lite | Fast, coarse texture with visible directional structure |
-| False Floyd-Steinberg | Coarse, strongly directional texture |
-| Fan | Compact, left-leaning grain with pronounced diagonal structure |
-| Shiau-Fan | Short-tailed texture designed to reduce worm artefacts |
-| Shiau-Fan 2 | Longer-tailed grain with smoother highlight and shadow texture |
-| Stevenson-Arce | Very fine, dispersed grain with smooth tones and preserved detail |
-| Two-dimensional Knuth | Minimal, regular diagonal texture |
-
-## Adaptive diffusion
-
-`OstromoukhovDither` uses a serpentine scan and selects three error-distribution
-weights independently for each error-adjusted RGB channel. The 8-bit
-coefficient table comes from Appendix I of
-[Ostromoukhov's original paper](https://perso.liris.cnrs.fr/victor.ostromoukhov/publications/pdf/SIGGRAPH01_varcoeffED.pdf).
-Rolling source and error rows keep working memory proportional to image width.
-
-```rust,no_run
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let source = read("input.png")?;
-    let effect = OstromoukhovDither::new(Palette::black_and_white())
-        .with_pixel_size(2, 2)?;
-    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
-    write("output.png", &rendered)
-}
-```
-
-## Riemersma dithering
-
-`RiemersmaDither` carries recent quantisation errors along a Hilbert curve,
-avoiding the horizontal emphasis of row-based diffusion. It defaults to the
-[originally recommended](https://www.compuphase.com/riemer.htm) 16-entry
-history and a 16:1 newest-to-oldest weight ratio. A decay of `1.0` weights every
-retained error equally, while larger values suppress older errors more
-strongly.
-
-```rust,no_run
-use ditherlib::prelude::*;
-
-fn main() -> ditherlib::Result<()> {
-    let source = read("input.png")?;
-    let effect = RiemersmaDither::new(Palette::pico_8())
-        .with_history_length(24)?
-        .with_decay(20.0)?
-        .with_pixel_size(2, 2)?;
-    let rendered = Renderer::new().render(&source, &effect, &Selection::All)?;
-    write("output.png", &rendered)
-}
-```
-
-The traversal is deterministic and visits every selected logical pixel once.
-History resets at selection gaps and where clipping a square Hilbert curve to a
-rectangular image creates a discontinuity.
-
-## Errors
-
-Fallible operations return `ditherlib::Result<T>`. Use `DitherError::kind()`
-to handle stable `ErrorKind` categories covering file access, unsupported
-formats, decoding, encoding, invalid geometry, dimension mismatches, invalid
-parameters, and effect failures. Dependency errors may remain available
-through the standard `Error::source()` method for diagnostics.
-
-JPEG output discards alpha because the format does not support transparency.
+Available features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`, `ico`,
+`jpeg`, `png`, `pnm`, `qoi`, `tga`, `tiff`, and `webp`. Processing algorithms
+compile without codec features when images are supplied through
+`SourceImage::from_rgba8`.
 
 ## Examples
 
-Every example accepts an input path and output directory. The directory is
-created when necessary, and each example writes descriptively named PNG files:
+Every example accepts an input path and output directory:
 
 ```sh
 cargo run --release --example quick_start -- input.jpg output
-cargo run --release --example ordered_dither -- input.jpg output
-cargo run --release --example error_diffusion -- input.jpg output
-cargo run --release --example halftone -- input.jpg output
-cargo run --release --example palettes -- input.jpg output
-cargo run --release --example selections -- input.jpg output
-cargo run --release --example pipeline -- input.jpg output
-cargo run --release --example comparison -- input.jpg output
 ```
 
-See the [`examples`](./examples/) directory for the complete source.
+| Example | Demonstrates |
+| --- | --- |
+| [`quick_start`](https://github.com/Downmoto/ditherlib/blob/master/examples/quick_start.rs) | Reading, thresholding, rendering, and writing. |
+| [`ordered_dither`](https://github.com/Downmoto/ditherlib/blob/master/examples/ordered_dither.rs) | Ordered dithering with custom logical pixels. |
+| [`error_diffusion`](https://github.com/Downmoto/ditherlib/blob/master/examples/error_diffusion.rs) | Floyd-Steinberg, Ostromoukhov, and Riemersma. |
+| [`halftone`](https://github.com/Downmoto/ditherlib/blob/master/examples/halftone.rs) | Monochrome and colour halftones. |
+| [`palettes`](https://github.com/Downmoto/ditherlib/blob/master/examples/palettes.rs) | Built-in, custom, derived, and perceptual palettes. |
+| [`selections`](https://github.com/Downmoto/ditherlib/blob/master/examples/selections.rs) | Whole-image and polygon selections. |
+| [`pipeline`](https://github.com/Downmoto/ditherlib/blob/master/examples/pipeline.rs) | A multi-effect rendering pipeline. |
+| [`comparison`](https://github.com/Downmoto/ditherlib/blob/master/examples/comparison.rs) | A visual overview of the major algorithm families. |
 
 ## Benchmarks
 
 The Criterion suite covers every effect and configuration family across
-deterministic in-memory fixtures. See [BENCHMARKS.md](BENCHMARKS.md) for the
-complete matrix, measurement boundaries, and baseline workflow.
+deterministic in-memory fixtures. See the
+[benchmark guide](https://github.com/Downmoto/ditherlib/blob/master/BENCHMARKS.md)
+for the complete matrix, measurement boundaries, HTML reports, and baseline
+workflow.
+
+## Minimum supported Rust version
+
+Ditherlib requires Rust 1.88 or newer.
+
+## Errors
+
+Fallible operations return `ditherlib::Result<T>`. `DitherError::kind()`
+provides stable `ErrorKind` categories for matching, while the error display
+and source retain diagnostic detail. JPEG output discards alpha because the
+format does not support transparency.
+
+## Licence
+
+Licensed under the
+[Apache License 2.0](https://github.com/Downmoto/ditherlib/blob/master/LICENSE).
+Example image attribution is recorded in the
+[assets documentation](https://github.com/Downmoto/ditherlib/blob/master/assets/README.md).
