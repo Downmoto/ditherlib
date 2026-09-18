@@ -218,5 +218,6 @@ format does not support transparency.
 
 Licensed under the
 [Apache License 2.0](https://github.com/Downmoto/ditherlib/blob/master/LICENSE).
+
 Example image attribution is recorded in the
 [assets documentation](https://github.com/Downmoto/ditherlib/blob/master/assets/README.md).
