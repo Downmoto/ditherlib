@@ -37,7 +37,7 @@ Or add Ditherlib directly to `Cargo.toml`:
 
 ```toml
 [dependencies]
-ditherlib = "0.9"
+ditherlib = "1"
 ```
 
 JPEG and PNG support are enabled by default. See [Codec features](#codec-features)
@@ -170,7 +170,7 @@ codecs:
 
 ```toml
 [dependencies]
-ditherlib = { version = "0.9", default-features = false, features = ["png", "webp"] }
+ditherlib = { version = "1", default-features = false, features = ["png", "webp"] }
 ```
 
 Available features are `avif`, `bmp`, `dds`, `exr`, `ff`, `gif`, `hdr`, `ico`,
