@@ -159,6 +159,8 @@ fn render(source: &SourceImage) -> ditherlib::Result<()> {
 }
 ```
 
+![Greyscale, ordered-dither, and blur pipeline applied to samurai armour](https://raw.githubusercontent.com/Downmoto/ditherlib/master/assets/samurai_pipeline.png)
+
 See the runnable [`pipeline` example](https://github.com/Downmoto/ditherlib/blob/master/examples/pipeline.rs).
 
 ## Codec features
