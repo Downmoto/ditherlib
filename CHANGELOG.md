@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.0.0
+
+### Added
+
+- Added `SourceImage::from_rgba8` for validated in-memory RGBA8 sources.
+- Added custom-mask selections through `Selection::Mask`.
+- Added `PipelineStep::new` and public effect inspection through
+  `PipelineStep::effect`.
+- Added a focused eight-example suite covering first render, ordered dithering,
+  diffusion, halftones, palettes, selections, pipelines, and algorithm
+  comparison.
+- Added a comprehensive Criterion benchmark suite with deterministic fixtures,
+  HTML reports, multiple resolutions, and coverage of every effect and option
+  family.
+- Added Apache 2.0 licensing, a documented Rust 1.88 MSRV, expanded CI release
+  gates, and a manual crates.io release procedure.
+
+### Changed
+
+- Organised effects into family-specific module paths such as
+  `effects::dither::diffusion::ErrorDiffusion`; common imports remain available
+  through `ditherlib::prelude`.
+- Required `Effect` implementations to be `Send + Sync`, and allowed
+  `Renderer::render` to accept trait objects through `&dyn Effect`.
+- Renamed `Polygon::centered_square` to `Polygon::centred_square`.
+- Reorganised the README around installation and common workflows, with
+  versioned reproducible artwork and links to focused examples and benchmarks.
+
+### Removed
+
+- Removed the unused `DotShape`, `ChannelMode`, and `ColourChannel` aliases.
+
 ## 0.9.1
 
 ### Added
