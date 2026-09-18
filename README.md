@@ -1,4 +1,4 @@
-# Ditherlib
+![Ditherlib: image effects and dithering for Rust](https://raw.githubusercontent.com/Downmoto/ditherlib/master/assets/ditherlib_banner_v1.0.0.png)
 
 [![Crates.io](https://img.shields.io/crates/v/ditherlib.svg)](https://crates.io/crates/ditherlib)
 [![Documentation](https://docs.rs/ditherlib/badge.svg)](https://docs.rs/ditherlib)
