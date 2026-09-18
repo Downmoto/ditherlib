@@ -36,6 +36,9 @@ jobs:
       - name: Test examples
         run: cargo test --examples
 
+      - name: Test banner generator
+        run: cargo test --manifest-path tools/banner/Cargo.toml --locked
+
       - name: Check benchmarks
         run: cargo bench --no-run --locked
 
